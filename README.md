@@ -1,19 +1,27 @@
 # YouTube Channel Downloader
 
+<p align="center">
+  <img src="docs/b.png" alt="YouTube Channel Downloader Main Screen" width="600"/>
+</p>
+
 This application is a desktop tool developed for downloading content from YouTube channels, playlists, and videos.
 
-## Features
+## 🚀 Quick Start
 
-- Download from YouTube channels, playlists, and videos
-- Cookies support for member-only videos
-- **Automatic cookie extraction** (from Edge, Chrome, and Firefox)
-- Video quality selection
-- Subtitle download option
-- Concurrent download settings
-- Modern and user-friendly interface
-- Real-time download progress
+### Option 1: Use Pre-built Executable (Recommended)
+You can run the application directly without installing Python:
 
-## Installation
+1. Download the latest executable from the [Releases](https://github.com/your-username/ytdlp-gui/releases) page
+2. Or use the pre-built executable in the `dist` folder:
+   ```bash
+   # Windows
+   dist/YouTube-Downloader.exe
+   ```
+3. Double-click the executable to run the application
+4. No Python installation required!
+
+### Option 2: Run from Source
+If you want to run from source code:
 
 1. Python 3.7+ must be installed
 2. Install the required packages:
@@ -24,25 +32,50 @@ This application is a desktop tool developed for downloading content from YouTub
    ```bash
    pip install yt-dlp
    ```
-
-## Usage
-
-1. Start the application:
+4. Run the application:
    ```bash
    python main.py
    ```
-2. In the opened interface, select the download type (Channel, Playlist, Video)
-3. Enter the YouTube URL and click the "Validate" button
-4. Configure the download settings:
+
+## 🎯 Features
+
+- Download from YouTube channels, playlists, and videos
+- Cookies support for member-only videos
+- **Automatic cookie extraction** (from Edge, Chrome, and Firefox)
+- Video quality selection
+- Subtitle download option
+- Concurrent download settings
+- Modern and user-friendly interface
+- Real-time download progress
+- **Portable executable** - no installation required
+
+<p align="center">
+  <img src="docs/c.png" alt="YouTube Channel Downloader Download Screen" width="600"/>
+</p>
+
+## 🚀 Usage
+
+1. **Using the executable (easiest)**:
+   - Double-click `dist/YouTube-Downloader.exe`
+   - Or run from command line: `dist/YouTube-Downloader.exe`
+
+2. **Using Python source**:
+   ```bash
+   python main.py
+   ```
+
+3. In the opened interface, select the download type (Channel, Playlist, Video)
+4. Enter the YouTube URL and click the "Validate" button
+5. Configure the download settings:
    - Video quality
    - Subtitle download
    - Download folder
    - Cookies file (for member-only videos)
    - Number of concurrent downloads
-5. Click the "Start Download" button to begin downloading
-6. You can track the download progress in the interface.
+6. Click the "Start Download" button to begin downloading
+7. You can track the download progress in the interface
 
-## Using Cookies for Member-Only Videos
+## 🍪 Using Cookies for Member-Only Videos
 
 To download member-only videos, you need to use your YouTube cookies file:
 
@@ -91,7 +124,7 @@ python cookie_extractor.py --browser firefox
 2. Select the cookies.txt file you created
 3. You can now download member-only videos
 
-## Cookie Extractor Features
+## ⚡ Cookie Extractor Features
 
 - **Automatic Browser Detection**: Automatically finds Edge, Chrome, and Firefox
 - **Multi-Platform Support**: Windows, macOS, and Linux
@@ -101,14 +134,14 @@ python cookie_extractor.py --browser firefox
 - **Error Handling**: Comprehensive error control and user-friendly messages
 - **Works While Browser is Open**: Can extract cookies even if Edge is open
 
-## Security Notes
+## 🔒 Security Notes
 
 - Keep your cookies file secure, do not share it with others
 - The cookies file grants access to your YouTube account
 - Update your cookies file regularly
 - The cookie extractor only extracts YouTube cookies
 
-## Troubleshooting
+## 🔧 Troubleshooting
 
 ### "yt-dlp is not installed" Error
 ```bash
@@ -137,7 +170,12 @@ pip install pycryptodome pywin32 cryptography
 - Make sure the URL is correct
 - Make sure you have enough disk space
 
-## Building Executable
+### Executable Issues
+- If the executable doesn't run, try running it as administrator
+- Make sure Windows Defender isn't blocking the file
+- Check that you have the latest Windows updates
+
+## 📦 Building Executable
 
 To create standalone executables for all platforms:
 
@@ -208,9 +246,10 @@ This will:
 - **FFmpeg Included**: Video merging works out of the box
 - **Portable**: Can be run on any compatible machine
 - **Size**: Approximately 70-80MB per platform
+- **Ready to Use**: Pre-built executable available in `dist/` folder
 
 ### 📁 Distribution Files
-- **Windows**: `YouTube-Downloader.exe` (77MB)
+- **Windows**: `YouTube-Downloader.exe` (77MB) - Available in `dist/` folder
 - **Linux**: `YouTube-Downloader-Linux` (75MB)
 - **macOS**: `YouTube-Downloader-macOS.app` bundle or `.dmg` (80MB)
 
@@ -220,6 +259,18 @@ Each executable contains:
 - FFmpeg binary
 - Application code
 
-## License
+## 📥 Download Options
+
+### Pre-built Executable (Recommended)
+- **Direct Download**: Use the executable in `dist/YouTube-Downloader.exe`
+- **GitHub Releases**: Download from the [Releases](https://github.com/your-username/ytdlp-gui/releases) page
+- **No Installation Required**: Just download and run
+
+### Source Code
+- **Clone Repository**: `git clone https://github.com/your-username/ytdlp-gui.git`
+- **Download ZIP**: Download source code from GitHub
+- **Requires Python**: Python 3.7+ and dependencies needed
+
+## 📄 License
 
 This project is licensed under the MIT License. 

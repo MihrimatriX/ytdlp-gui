@@ -26,10 +26,8 @@ output/
 # ===========================================
 # PyInstaller build directories
 build/
-dist/
 
 # Executable files
-*.exe
 *.app
 *.deb
 *.rpm
@@ -42,7 +40,6 @@ dist/
 
 # Setup.py build directories
 build/
-dist/
 *.egg-info/
 
 # Wheel files
@@ -62,7 +59,6 @@ __pycache__/
 .Python
 build/
 develop-eggs/
-dist/
 downloads/
 eggs/
 .eggs/
