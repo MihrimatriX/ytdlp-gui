@@ -1,0 +1,34 @@
+# FFmpeg klasörü (otomatik indirilen)
+ffmpeg/
+
+# Log dosyaları
+*.log
+app_log.txt
+
+# Archive dosyaları
+archive.txt
+
+# Cookies dosyaları
+*.cookies
+youtube_cookies.txt
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# IDE dosyaları
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Geçici dosyalar
+*.tmp
+*.temp 

@@ -1,0 +1,202 @@
+name: Build Multi-Platform Release
+
+on:
+  push:
+    tags:
+      - 'v*'  # Trigger on version tags like v1.0.0
+  workflow_dispatch:  # Allow manual trigger
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pyinstaller
+    
+    - name: Setup FFmpeg
+      run: |
+        python -c "from downloader import Downloader; d = Downloader(); d.setup_ffmpeg(); print('FFmpeg setup completed')"
+    
+    - name: Build Windows executable
+      run: |
+        pyinstaller youtube_downloader.spec --clean --noconfirm
+    
+    - name: Upload Windows artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: youtube-downloader-windows
+        path: dist/YouTube-Downloader.exe
+
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev
+    
+    - name: Install Python dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pyinstaller
+    
+    - name: Setup FFmpeg
+      run: |
+        python -c "from downloader import Downloader; d = Downloader(); d.setup_ffmpeg(); print('FFmpeg setup completed')"
+    
+    - name: Build Linux executable
+      run: |
+        pyinstaller youtube_downloader_linux.spec --clean --noconfirm
+    
+    - name: Make executable
+      run: |
+        chmod +x dist/YouTube-Downloader-Linux
+    
+    - name: Upload Linux artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: youtube-downloader-linux
+        path: dist/YouTube-Downloader-Linux
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: Install Python dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pyinstaller
+    
+    - name: Setup FFmpeg
+      run: |
+        python -c "from downloader import Downloader; d = Downloader(); d.setup_ffmpeg(); print('FFmpeg setup completed')"
+    
+    - name: Build macOS executable
+      run: |
+        pyinstaller youtube_downloader_macos.spec --clean --noconfirm
+    
+    - name: Install create-dmg
+      run: |
+        brew install create-dmg
+    
+    - name: Create DMG
+      run: |
+        create-dmg \
+          --volname "YouTube Downloader" \
+          --window-pos 200 120 \
+          --window-size 600 300 \
+          --icon-size 100 \
+          --icon "YouTube-Downloader-macOS.app" 175 120 \
+          --hide-extension "YouTube-Downloader-macOS.app" \
+          --app-drop-link 425 120 \
+          "dist/YouTube-Downloader-macOS.dmg" \
+          "dist/YouTube-Downloader-macOS.app" || true
+    
+    - name: Upload macOS app artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: youtube-downloader-macos-app
+        path: dist/YouTube-Downloader-macOS.app
+    
+    - name: Upload macOS DMG artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: youtube-downloader-macos-dmg
+        path: dist/YouTube-Downloader-macOS.dmg
+      if: always()
+
+  create-release:
+    needs: [build-windows, build-linux, build-macos]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Download all artifacts
+      uses: actions/download-artifact@v3
+    
+    - name: Create release archives
+      run: |
+        # Create archives for better organization
+        cd youtube-downloader-windows && zip -r ../YouTube-Downloader-Windows.zip . && cd ..
+        cd youtube-downloader-linux && tar -czf ../YouTube-Downloader-Linux.tar.gz . && cd ..
+        cd youtube-downloader-macos-app && zip -r ../YouTube-Downloader-macOS.zip . && cd ..
+        
+        # List all files for verification
+        ls -la
+    
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          YouTube-Downloader-Windows.zip
+          YouTube-Downloader-Linux.tar.gz
+          YouTube-Downloader-macOS.zip
+          youtube-downloader-macos-dmg/YouTube-Downloader-macOS.dmg
+        body: |
+          ## YouTube Downloader - Multi-Platform Release
+          
+          ### 📥 Download Instructions
+          
+          **Windows:**
+          - Download `YouTube-Downloader-Windows.zip`
+          - Extract and run `YouTube-Downloader.exe`
+          
+          **Linux:**
+          - Download `YouTube-Downloader-Linux.tar.gz`
+          - Extract: `tar -xzf YouTube-Downloader-Linux.tar.gz`
+          - Run: `./YouTube-Downloader-Linux`
+          
+          **macOS:**
+          - Download `YouTube-Downloader-macOS.dmg` (recommended)
+          - Or download `YouTube-Downloader-macOS.zip` and extract
+          - Run the app from Applications or directly
+          
+          ### ✨ Features
+          - Download individual videos, playlists, or entire channels
+          - Multiple quality options (720p, 1080p, 4K, etc.)
+          - Subtitle support with multiple languages
+          - Progress tracking for multiple downloads
+          - Cookie support for member-only content
+          - Built-in FFmpeg for video processing
+          
+          ### 🛠️ Requirements
+          - No additional software required
+          - All dependencies are bundled
+          - FFmpeg included for video processing
+          
+          ### 📋 Changelog
+          - Multi-platform support (Windows, Linux, macOS)
+          - Improved UI with real-time progress tracking
+          - Enhanced error handling and diagnostics
+          - Subtitle embedding capabilities
+          - Concurrent download support
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} 

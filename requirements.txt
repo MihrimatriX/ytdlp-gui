@@ -1,0 +1,4 @@
+flet
+yt-dlp
+pywin32
+cryptography
