@@ -41,18 +41,18 @@ class Downloader:
 
     def setup_ffmpeg(self) -> None:
         """Set up FFmpeg for video/audio merging"""
-        ffmpeg_dir = os.path.join(os.path.dirname(__file__), "ffmpeg")
-        ensure_directory_exists(ffmpeg_dir)
-        
-        # Determine FFmpeg executable name based on platform
         if platform.system() == "Windows":
+            # Windows: Use bundled FFmpeg
+            ffmpeg_dir = os.path.join(os.path.dirname(__file__), "ffmpeg")
+            ensure_directory_exists(ffmpeg_dir)
             self.ffmpeg_path = os.path.join(ffmpeg_dir, "ffmpeg.exe")
+            
+            # Download FFmpeg if not available
+            if not os.path.exists(self.ffmpeg_path):
+                self._download_ffmpeg(ffmpeg_dir)
         else:
-            self.ffmpeg_path = os.path.join(ffmpeg_dir, "ffmpeg")
-        
-        # Download FFmpeg if not available
-        if not os.path.exists(self.ffmpeg_path):
-            self._download_ffmpeg(ffmpeg_dir)
+            # Linux/macOS: Use system FFmpeg
+            self._setup_ffmpeg_unix()
         
         log_event(f"FFmpeg setup complete: {self.ffmpeg_path}")
 

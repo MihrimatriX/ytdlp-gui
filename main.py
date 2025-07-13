@@ -51,11 +51,8 @@ def main(page: ft.Page) -> None:
     # Create and add the main UI
     app_ui = create_app_ui(page)
     page.add(app_ui)
-    page.update()
     
-    # Force window size after UI is loaded (workaround for Flet window sizing issues)
-    page.window_width = APP_CONFIG["window_width"]
-    page.window_height = APP_CONFIG["window_height"]
+    # Update once after adding UI
     page.update()
     
     log_event("application_started: YouTube Downloader initialized successfully")

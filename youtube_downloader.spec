@@ -27,7 +27,7 @@ a = Analysis(
         *ytdlp_data,
         # Cryptography data dosyaları
         *crypto_data,
-        # FFmpeg binary'sini dahil et (eğer varsa)
+        # FFmpeg binary'sini dahil et (Windows için gerekli)
         ('ffmpeg/ffmpeg.exe', 'ffmpeg/') if os.path.exists('ffmpeg/ffmpeg.exe') else None,
         # Diğer gerekli dosyalar
         ('requirements.txt', '.'),

@@ -9,7 +9,7 @@ pip install pyinstaller
 
 echo.
 echo [2/4] Setting up FFmpeg...
-py -3.11 -c "from downloader import Downloader; d = Downloader(); d.setup_ffmpeg(); print('FFmpeg setup completed')"
+py -3.11 -c "from downloader import Downloader; import time; d = Downloader(); d.setup_ffmpeg(); time.sleep(1); print('FFmpeg setup completed')"
 
 echo.
 echo [3/4] Building executable...

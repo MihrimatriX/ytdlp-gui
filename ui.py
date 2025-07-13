@@ -78,10 +78,8 @@ def create_app_ui(page: ft.Page) -> ft.Row:
 def _initialize_ui_components(page: ft.Page, downloader: Downloader) -> Dict[str, ft.Control]:
     """Initialize all UI components"""
     
-    # File pickers
-    file_picker = ft.FilePicker(on_result=lambda e: _on_folder_selected(e, components, page))
-    cookies_picker = ft.FilePicker(on_result=lambda e: _on_cookies_selected(e, components, downloader, page))
-    page.overlay.extend([file_picker, cookies_picker])
+    # Initialize components dict first
+    components = {}
     
     # Input components
     components = {
@@ -159,9 +157,7 @@ def _initialize_ui_components(page: ft.Page, downloader: Downloader) -> Dict[str
             color="white"
         ),
         
-        # File pickers
-        "file_picker": file_picker,
-        "cookies_picker": cookies_picker,
+        # File pickers will be added later
         
         # Progress display
         "progress_display": ft.ListView([
@@ -185,6 +181,15 @@ def _initialize_ui_components(page: ft.Page, downloader: Downloader) -> Dict[str
         color="blue",
         weight=ft.FontWeight.W_500
     )
+    
+    # File pickers (after components dict is complete)
+    file_picker = ft.FilePicker(on_result=lambda e: _on_folder_selected(e, components, page))
+    cookies_picker = ft.FilePicker(on_result=lambda e: _on_cookies_selected(e, components, downloader, page))
+    page.overlay.extend([file_picker, cookies_picker])
+    
+    # Update components with file pickers
+    components["file_picker"] = file_picker
+    components["cookies_picker"] = cookies_picker
     
     return components
 
@@ -758,20 +763,8 @@ def _setup_event_handlers(components: Dict[str, ft.Control], downloader: Downloa
             }
             progress_event_queue.put(error_update)
 
-    # poll_progress_events fonksiyonunu senkron olarak tanımla
-    def poll_progress_events():
-        while True:
-            try:
-                update = progress_event_queue.get(timeout=0.1)
-                update_ui_during_download(update)
-            except queue.Empty:
-                continue
-            except Exception as e:
-                print(f"[ERROR] Progress polling error: {e}")
-                continue
-    
-    # polling fonksiyonunu thread olarak başlat
-    threading.Thread(target=poll_progress_events, daemon=True).start()
+    # Progress polling is handled by _start_progress_monitoring function
+    # No need for duplicate polling here
 
     # Note: update_video_card_status is now defined outside this function
 
@@ -949,9 +942,14 @@ def _start_progress_monitoring(components: Dict[str, ft.Control], page: ft.Page)
     def poll_progress_events():
         while True:
             try:
-                update = progress_event_queue.get(timeout=0.1)
-                # Use page.run_thread_safe for UI updates from background thread
-                page.run_thread(lambda: update_ui_during_download(update, components, page))
+                update = progress_event_queue.get(timeout=1.0)  # Longer timeout
+                # Use lambda to capture update correctly
+                def update_ui():
+                    update_ui_during_download(update, components, page)
+                
+                # Schedule UI update on main thread
+                page.run_thread(update_ui)
+                
             except queue.Empty:
                 continue
             except Exception as e:
@@ -959,7 +957,8 @@ def _start_progress_monitoring(components: Dict[str, ft.Control], page: ft.Page)
                 continue
     
     # Start polling thread
-    threading.Thread(target=poll_progress_events, daemon=True).start()
+    thread = threading.Thread(target=poll_progress_events, daemon=True)
+    thread.start()
 
 def update_ui_during_download(update: Dict[str, any], components: Dict[str, ft.Control], page: ft.Page) -> None:
     """Update UI during download process"""
@@ -1092,11 +1091,12 @@ def update_ui_during_download(update: Dict[str, any], components: Dict[str, ft.C
             components["info_text"].value = "FFmpeg installation successful!"
             components["info_text"].color = UI_CONFIG["colors"]["success"]
     
-    # Update UI
+    # Update UI once at the end
     try:
         page.update()
     except Exception as e:
         print(f"[ERROR] Page update error: {e}")
+        log_error(f"UI update failed: {e}")
 
 def update_video_card_status(video_url: str, status: str, components: Dict[str, ft.Control]) -> None:
     """Update video card visual status"""
