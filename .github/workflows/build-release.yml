@@ -32,7 +32,7 @@ jobs:
         pyinstaller youtube_downloader.spec --clean --noconfirm
     
     - name: Upload Windows artifact
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: youtube-downloader-windows
         path: dist/YouTube-Downloader.exe
@@ -71,7 +71,7 @@ jobs:
         chmod +x dist/YouTube-Downloader-Linux
     
     - name: Upload Linux artifact
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: youtube-downloader-linux
         path: dist/YouTube-Downloader-Linux
@@ -118,13 +118,13 @@ jobs:
           "dist/YouTube-Downloader-macOS.app" || true
     
     - name: Upload macOS app artifact
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: youtube-downloader-macos-app
         path: dist/YouTube-Downloader-macOS.app
     
     - name: Upload macOS DMG artifact
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: youtube-downloader-macos-dmg
         path: dist/YouTube-Downloader-macOS.dmg
@@ -138,7 +138,7 @@ jobs:
     - uses: actions/checkout@v4
     
     - name: Download all artifacts
-      uses: actions/download-artifact@v3
+      uses: actions/download-artifact@v4
     
     - name: Create release archives
       run: |
