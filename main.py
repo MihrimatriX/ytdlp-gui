@@ -14,7 +14,7 @@ APP_CONFIG = {
     "window_height": 1200,
     "min_width": 1400,
     "min_height": 1000,
-    "theme_mode": ft.ThemeMode.LIGHT
+    "theme_mode": ft.ThemeMode.SYSTEM
 }
 
 def setup_window_properties(page: ft.Page) -> None:
