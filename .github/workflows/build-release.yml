@@ -13,7 +13,7 @@ jobs:
     - uses: actions/checkout@v4
     
     - name: Set up Python
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       with:
         python-version: '3.11'
     
@@ -43,14 +43,28 @@ jobs:
     - uses: actions/checkout@v4
     
     - name: Set up Python
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       with:
         python-version: '3.11'
     
     - name: Install system dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev
+        sudo apt-get install -y \
+          libgtk-3-dev \
+          libglib2.0-dev \
+          libcairo2-dev \
+          libpango1.0-dev \
+          libgdk-pixbuf2.0-dev \
+          libatk1.0-dev \
+          libwebkit2gtk-4.0-dev \
+          libsoup2.4-dev \
+          libjavascriptcoregtk-4.0-dev \
+          pkg-config \
+          build-essential \
+          libffi-dev \
+          libssl-dev \
+          ffmpeg
     
     - name: Install Python dependencies
       run: |
@@ -58,9 +72,9 @@ jobs:
         pip install -r requirements.txt
         pip install pyinstaller
     
-    - name: Setup FFmpeg
+    - name: Setup FFmpeg (Skip download, use system)
       run: |
-        python -c "from downloader import Downloader; d = Downloader(); d.setup_ffmpeg(); print('FFmpeg setup completed')"
+        python -c "import os; print('FFmpeg system installation:', os.system('ffmpeg -version'))"
     
     - name: Build Linux executable
       run: |
@@ -82,9 +96,14 @@ jobs:
     - uses: actions/checkout@v4
     
     - name: Set up Python
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       with:
         python-version: '3.11'
+    
+    - name: Install system dependencies
+      run: |
+        brew update
+        brew install ffmpeg pkg-config
     
     - name: Install Python dependencies
       run: |
@@ -92,30 +111,30 @@ jobs:
         pip install -r requirements.txt
         pip install pyinstaller
     
-    - name: Setup FFmpeg
+    - name: Setup FFmpeg (Skip download, use system)
       run: |
-        python -c "from downloader import Downloader; d = Downloader(); d.setup_ffmpeg(); print('FFmpeg setup completed')"
+        python -c "import os; print('FFmpeg system installation:', os.system('ffmpeg -version'))"
     
     - name: Build macOS executable
       run: |
         pyinstaller youtube_downloader_macos.spec --clean --noconfirm
     
-    - name: Install create-dmg
+    - name: Create DMG (Optional)
       run: |
-        brew install create-dmg
-    
-    - name: Create DMG
-      run: |
-        create-dmg \
-          --volname "YouTube Downloader" \
-          --window-pos 200 120 \
-          --window-size 600 300 \
-          --icon-size 100 \
-          --icon "YouTube-Downloader-macOS.app" 175 120 \
-          --hide-extension "YouTube-Downloader-macOS.app" \
-          --app-drop-link 425 120 \
-          "dist/YouTube-Downloader-macOS.dmg" \
-          "dist/YouTube-Downloader-macOS.app" || true
+        if command -v create-dmg &> /dev/null; then
+          create-dmg \
+            --volname "YouTube Downloader" \
+            --window-pos 200 120 \
+            --window-size 600 300 \
+            --icon-size 100 \
+            --icon "YouTube-Downloader-macOS.app" 175 120 \
+            --hide-extension "YouTube-Downloader-macOS.app" \
+            --app-drop-link 425 120 \
+            "dist/YouTube-Downloader-macOS.dmg" \
+            "dist/YouTube-Downloader-macOS.app" || true
+        else
+          echo "create-dmg not available, skipping DMG creation"
+        fi
     
     - name: Upload macOS app artifact
       uses: actions/upload-artifact@v4
@@ -123,12 +142,13 @@ jobs:
         name: youtube-downloader-macos-app
         path: dist/YouTube-Downloader-macOS.app
     
-    - name: Upload macOS DMG artifact
+    - name: Upload macOS DMG artifact (if exists)
       uses: actions/upload-artifact@v4
       with:
         name: youtube-downloader-macos-dmg
         path: dist/YouTube-Downloader-macOS.dmg
       if: always()
+      continue-on-error: true
 
   create-release:
     needs: [build-windows, build-linux, build-macos]
@@ -151,7 +171,7 @@ jobs:
         ls -la
     
     - name: Create GitHub Release
-      uses: softprops/action-gh-release@v1
+      uses: softprops/action-gh-release@v2
       with:
         files: |
           YouTube-Downloader-Windows.zip

@@ -113,10 +113,28 @@ class Downloader:
             shutil.copy2(os.path.join(bin_dir, "ffmpeg.exe"), self.ffmpeg_path)
             shutil.rmtree(extracted_dir)
 
+    def _check_system_ffmpeg(self) -> bool:
+        """Check if system FFmpeg is available"""
+        try:
+            result = subprocess.run(
+                ["ffmpeg", "-version"], 
+                capture_output=True, 
+                text=True,
+                timeout=10
+            )
+            return result.returncode == 0
+        except Exception:
+            return False
+
     def _setup_ffmpeg_unix(self) -> None:
         """Set up FFmpeg for Unix-like systems"""
-        log_warning("Linux/Mac: Please install FFmpeg using 'sudo apt install ffmpeg' or 'brew install ffmpeg'")
-        self.ffmpeg_path = "ffmpeg"  # Use system PATH
+        # Try to find system FFmpeg first
+        if self._check_system_ffmpeg():
+            log_event("Using system FFmpeg installation")
+            self.ffmpeg_path = "ffmpeg"  # Use system PATH
+        else:
+            log_warning("Linux/Mac: Please install FFmpeg using 'sudo apt install ffmpeg' or 'brew install ffmpeg'")
+            self.ffmpeg_path = "ffmpeg"  # Use system PATH anyway, will fail gracefully
 
     def check_ffmpeg(self) -> bool:
         """

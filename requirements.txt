@@ -1,4 +1,8 @@
-flet
-yt-dlp
-pywin32
-cryptography
+flet>=0.21.0
+yt-dlp>=2024.1.0
+pywin32; sys_platform == "win32"
+cryptography>=3.4.8
+requests>=2.25.1
+urllib3>=1.26.0
+packaging>=21.0
+setuptools>=50.0.0

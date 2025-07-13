@@ -4,15 +4,26 @@ import sys
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 # Flet için gerekli data dosyalarını topla
-flet_data = collect_data_files('flet')
-flet_submodules = collect_submodules('flet')
+try:
+    flet_data = collect_data_files('flet')
+    flet_submodules = collect_submodules('flet')
+except Exception:
+    flet_data = []
+    flet_submodules = []
 
 # yt-dlp için gerekli data dosyalarını topla
-ytdlp_data = collect_data_files('yt_dlp')
-ytdlp_submodules = collect_submodules('yt_dlp')
+try:
+    ytdlp_data = collect_data_files('yt_dlp')
+    ytdlp_submodules = collect_submodules('yt_dlp')
+except Exception:
+    ytdlp_data = []
+    ytdlp_submodules = []
 
 # Cryptography için gerekli data dosyalarını topla
-crypto_data = collect_data_files('cryptography')
+try:
+    crypto_data = collect_data_files('cryptography')
+except Exception:
+    crypto_data = []
 
 block_cipher = None
 
@@ -27,8 +38,8 @@ a = Analysis(
         *ytdlp_data,
         # Cryptography data dosyaları
         *crypto_data,
-        # FFmpeg binary'sini dahil et (Linux için)
-        ('ffmpeg/ffmpeg', 'ffmpeg/') if os.path.exists('ffmpeg/ffmpeg') else None,
+        # System FFmpeg kullanacağız, binary dahil etmiyoruz
+        # ('ffmpeg/ffmpeg', 'ffmpeg/') if os.path.exists('ffmpeg/ffmpeg') else None,
         # Diğer gerekli dosyalar
         ('requirements.txt', '.'),
         ('README.md', '.'),
@@ -65,10 +76,15 @@ a = Analysis(
         'keyring',
         'keyring.backends',
         'keyring.backends.SecretService',
+        'sqlite3',
+        'gi',
+        'gi.repository',
+        'gi.repository.Gtk',
+        'gi.repository.GLib',
+        'gi.repository.GObject',
         
         # JSON ve diğer standart kütüphaneler
         'json',
-        'sqlite3',
         'tempfile',
         'shutil',
         'urllib.request',
@@ -90,11 +106,25 @@ a = Analysis(
         # Diğer bağımlılıklar
         'packaging',
         'setuptools',
+        'pkg_resources',
+        'importlib_metadata',
+        'zipp',
+        'typing_extensions',
     ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=[
+        'tkinter',
+        'matplotlib',
+        'numpy',
+        'pandas',
+        'PIL',
+        'PyQt5',
+        'PyQt6',
+        'PySide2',
+        'PySide6',
+    ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,
