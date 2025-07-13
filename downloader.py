@@ -1,3 +1,8 @@
+"""
+YouTube Downloader - Core Download Module
+Handles video downloading using yt-dlp with FFmpeg integration
+"""
+
 import subprocess
 import json
 import re
@@ -5,422 +10,536 @@ import os
 import zipfile
 import urllib.request
 import platform
-from utils import log_event
+from typing import Dict, List, Optional, Tuple, Iterator, Any
+from utils import log_event, log_error, log_warning, ensure_directory_exists, format_bytes
 
 class Downloader:
-    def __init__(self, archive_path="archive.txt", cookies_file=None):
+    """Main downloader class for YouTube videos using yt-dlp"""
+    
+    # Regex patterns for parsing yt-dlp output
+    PROGRESS_PATTERN = re.compile(
+        r'(\d+\.\d+)%.*?of\s+(\S+).*?at\s+(\S+)(?:.*?ETA\s+(\S+))?'
+    )
+    TITLE_PATTERN = re.compile(r'\[info\]\s+(.+?):')
+    DESTINATION_PATTERN = re.compile(r'\[download\] Destination:\s+(.+)')
+    YOUTUBE_ID_PATTERN = re.compile(r'\[youtube\]\s+(.+?):\s+Downloading webpage')
+    
+    def __init__(self, archive_path: str = "archive.txt", cookies_file: Optional[str] = None):
+        """
+        Initialize the downloader
+        
+        Args:
+            archive_path: Path to the download archive file
+            cookies_file: Path to cookies file for authentication
+        """
         self.archive_path = archive_path
         self.cookies_file = cookies_file
-        self.ffmpeg_path = None
+        self.ffmpeg_path: Optional[str] = None
         self.setup_ffmpeg()
-
-    def setup_ffmpeg(self):
-        """FFmpeg'i uygulamaya özel olarak kurar"""
-        # FFmpeg klasörü oluştur
-        ffmpeg_dir = os.path.join(os.path.dirname(__file__), "ffmpeg")
-        if not os.path.exists(ffmpeg_dir):
-            os.makedirs(ffmpeg_dir)
         
-        # FFmpeg executable'ının yolu
+        log_event(f"Downloader initialized: archive={archive_path}, cookies={bool(cookies_file)}")
+
+    def setup_ffmpeg(self) -> None:
+        """Set up FFmpeg for video/audio merging"""
+        ffmpeg_dir = os.path.join(os.path.dirname(__file__), "ffmpeg")
+        ensure_directory_exists(ffmpeg_dir)
+        
+        # Determine FFmpeg executable name based on platform
         if platform.system() == "Windows":
             self.ffmpeg_path = os.path.join(ffmpeg_dir, "ffmpeg.exe")
         else:
             self.ffmpeg_path = os.path.join(ffmpeg_dir, "ffmpeg")
         
-        # FFmpeg yüklü değilse indir
+        # Download FFmpeg if not available
         if not os.path.exists(self.ffmpeg_path):
-            self.download_ffmpeg(ffmpeg_dir)
+            self._download_ffmpeg(ffmpeg_dir)
         
-        log_event(f"FFmpeg yolu: {self.ffmpeg_path}")
+        log_event(f"FFmpeg setup complete: {self.ffmpeg_path}")
 
-    def download_ffmpeg(self, ffmpeg_dir):
-        """FFmpeg'i indirir ve kurar"""
+    def _download_ffmpeg(self, ffmpeg_dir: str) -> None:
+        """
+        Download and install FFmpeg
+        
+        Args:
+            ffmpeg_dir: Directory to install FFmpeg
+        """
         try:
-            log_event("FFmpeg indiriliyor...")
+            log_event("Starting FFmpeg download...")
             
             if platform.system() == "Windows":
-                # Windows için FFmpeg indir
-                ffmpeg_url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
-                zip_path = os.path.join(ffmpeg_dir, "ffmpeg.zip")
-                
-                # ZIP dosyasını indir
-                urllib.request.urlretrieve(ffmpeg_url, zip_path)
-                
-                # ZIP'i aç
-                with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-                    zip_ref.extractall(ffmpeg_dir)
-                
-                # ZIP dosyasını sil
-                os.remove(zip_path)
-                
-                # Executable'ı doğru konuma taşı
-                extracted_dir = None
-                for item in os.listdir(ffmpeg_dir):
-                    item_path = os.path.join(ffmpeg_dir, item)
-                    if os.path.isdir(item_path) and item.startswith("ffmpeg"):
-                        extracted_dir = item_path
-                        break
-                
-                if extracted_dir:
-                    # bin klasöründen ffmpeg.exe'yi kopyala
-                    bin_dir = os.path.join(extracted_dir, "bin")
-                    if os.path.exists(bin_dir):
-                        import shutil
-                        shutil.copy2(os.path.join(bin_dir, "ffmpeg.exe"), self.ffmpeg_path)
-                        # Geçici klasörü sil
-                        shutil.rmtree(extracted_dir)
-                
-                log_event("FFmpeg Windows için başarıyla indirildi ve kuruldu")
+                self._download_ffmpeg_windows(ffmpeg_dir)
             else:
-                # Linux/Mac için FFmpeg kurulumu
-                log_event("Linux/Mac için FFmpeg kurulumu: Lütfen 'sudo apt install ffmpeg' veya 'brew install ffmpeg' komutunu çalıştırın")
-                self.ffmpeg_path = "ffmpeg"  # Sistem PATH'inden kullan
+                self._setup_ffmpeg_unix()
                 
         except Exception as e:
-            log_event(f"FFmpeg indirme hatası: {str(e)}")
-            self.ffmpeg_path = "ffmpeg"  # Sistem PATH'inden kullanmaya çalış
+            log_error(f"FFmpeg download failed: {str(e)}")
+            self.ffmpeg_path = "ffmpeg"  # Fallback to system PATH
 
-    def check_ffmpeg(self):
+    def _download_ffmpeg_windows(self, ffmpeg_dir: str) -> None:
+        """Download FFmpeg for Windows"""
+        ffmpeg_url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
+        zip_path = os.path.join(ffmpeg_dir, "ffmpeg.zip")
+        
+        # Download ZIP file
+        urllib.request.urlretrieve(ffmpeg_url, zip_path)
+        
+        # Extract ZIP file
+        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            zip_ref.extractall(ffmpeg_dir)
+        
+        # Clean up ZIP file
+        os.remove(zip_path)
+        
+        # Move executable to correct location
+        extracted_dir = self._find_extracted_ffmpeg_dir(ffmpeg_dir)
+        if extracted_dir:
+            self._move_ffmpeg_executable(extracted_dir)
+        
+        log_event("FFmpeg downloaded and installed successfully for Windows")
+
+    def _find_extracted_ffmpeg_dir(self, ffmpeg_dir: str) -> Optional[str]:
+        """Find the extracted FFmpeg directory"""
+        for item in os.listdir(ffmpeg_dir):
+            item_path = os.path.join(ffmpeg_dir, item)
+            if os.path.isdir(item_path) and item.startswith("ffmpeg"):
+                return item_path
+        return None
+
+    def _move_ffmpeg_executable(self, extracted_dir: str) -> None:
+        """Move FFmpeg executable to the correct location"""
+        import shutil
+        bin_dir = os.path.join(extracted_dir, "bin")
+        if os.path.exists(bin_dir):
+            shutil.copy2(os.path.join(bin_dir, "ffmpeg.exe"), self.ffmpeg_path)
+            shutil.rmtree(extracted_dir)
+
+    def _setup_ffmpeg_unix(self) -> None:
+        """Set up FFmpeg for Unix-like systems"""
+        log_warning("Linux/Mac: Please install FFmpeg using 'sudo apt install ffmpeg' or 'brew install ffmpeg'")
+        self.ffmpeg_path = "ffmpeg"  # Use system PATH
+
+    def check_ffmpeg(self) -> bool:
+        """
+        Check if FFmpeg is available and working
+        
+        Returns:
+            bool: True if FFmpeg is available
+        """
         try:
-            log_event(f"FFmpeg path check: {self.ffmpeg_path}")
+            # Check application-specific FFmpeg first
             if self.ffmpeg_path and os.path.exists(self.ffmpeg_path):
-                log_event("FFmpeg dosyası bulundu, çalıştırılıyor...")
-                result = subprocess.run([self.ffmpeg_path, "-version"], capture_output=True, text=True)
-                log_event(f"FFmpeg run result: {result.returncode}, stdout: {result.stdout}, stderr: {result.stderr}")
+                result = subprocess.run(
+                    [self.ffmpeg_path, "-version"], 
+                    capture_output=True, 
+                    text=True,
+                    timeout=10
+                )
                 if result.returncode == 0:
-                    log_event("FFmpeg bulundu (uygulama içi): Birleştirme işlemi mümkün")
+                    log_event("FFmpeg available (application-specific)")
                     return True
-            else:
-                log_event("FFmpeg dosyası bulunamadı, sistem PATH deneniyor...")
-                result = subprocess.run(["ffmpeg", "-version"], capture_output=True, text=True)
-                log_event(f"FFmpeg PATH run result: {result.returncode}, stdout: {result.stdout}, stderr: {result.stderr}")
-                if result.returncode == 0:
-                    log_event("FFmpeg bulundu (sistem): Birleştirme işlemi mümkün")
-                    self.ffmpeg_path = "ffmpeg"
-                    return True
-                else:
-                    log_event("FFmpeg bulunamadı: Birleştirme işlemi yapılamayacak")
-                    return False
+            
+            # Fallback to system FFmpeg
+            result = subprocess.run(
+                ["ffmpeg", "-version"], 
+                capture_output=True, 
+                text=True,
+                timeout=10
+            )
+            if result.returncode == 0:
+                log_event("FFmpeg available (system)")
+                self.ffmpeg_path = "ffmpeg"
+                return True
+                
+            log_warning("FFmpeg not available - video merging will not work")
+            return False
+            
         except Exception as e:
-            log_event(f"FFmpeg kontrolünde hata: {e}")
+            log_error(f"FFmpeg check failed: {e}")
             return False
 
-    def get_video_info(self, url):
-        log_event(f"get_video_info çağrıldı: url={url}")
-        # Playlist mi kontrol et
-        if "playlist" in url or "list=" in url:
-            command = ["yt-dlp", "--dump-single-json"]
-            if self.cookies_file and os.path.exists(self.cookies_file):
-                command.extend(["--cookies", self.cookies_file])
-            if self.ffmpeg_path and os.path.exists(self.ffmpeg_path):
-                command.extend(["--ffmpeg-location", os.path.dirname(self.ffmpeg_path)])
-            command.append(url)
-            result = subprocess.run(command, capture_output=True, text=True, encoding='utf-8')
-            if result.returncode != 0:
-                log_event(f"get_video_info hata: {result.stderr}")
-                return None, result.stderr
-            try:
-                data = json.loads(result.stdout)
-                if data.get("_type") == "playlist" and "entries" in data:
-                    videos = [entry for entry in data["entries"] if entry]
-                    log_event(f"get_video_info tamamlandı: {len(videos)} video bulundu (playlist).")
-                    return videos, None
-            except Exception as e:
-                log_event(f"get_video_info JSON parse error: {e}")
-                return None, str(e)
-        # Playlist değilse eski yöntem
-        command = ["yt-dlp", "--flat-playlist", "--dump-json"]
-        if self.cookies_file and os.path.exists(self.cookies_file):
-            command.extend(["--cookies", self.cookies_file])
-        if self.ffmpeg_path and os.path.exists(self.ffmpeg_path):
-            command.extend(["--ffmpeg-location", os.path.dirname(self.ffmpeg_path)])
+    def get_video_info(self, url: str) -> Tuple[Optional[List[Dict]], Optional[str]]:
+        """
+        Get video information from URL
+        
+        Args:
+            url: YouTube URL
+            
+        Returns:
+            Tuple of (video_list, error_message)
+        """
+        log_event(f"Getting video info for URL: {url}")
+        
+        try:
+            # Handle playlist URLs specially
+            if self._is_playlist_url(url):
+                return self._get_playlist_info(url)
+            else:
+                return self._get_video_info_flat(url)
+                
+        except Exception as e:
+            log_error(f"Failed to get video info: {e}")
+            return None, str(e)
+
+    def _is_playlist_url(self, url: str) -> bool:
+        """Check if URL is a playlist URL"""
+        return "playlist" in url or "list=" in url
+
+    def _get_playlist_info(self, url: str) -> Tuple[Optional[List[Dict]], Optional[str]]:
+        """Get playlist information using dump-single-json"""
+        command = self._build_base_command(["--dump-single-json"])
         command.append(url)
+        
         result = subprocess.run(command, capture_output=True, text=True, encoding='utf-8')
+        
         if result.returncode != 0:
-            log_event(f"get_video_info hata: {result.stderr}")
+            log_error(f"Playlist info failed: {result.stderr}")
             return None, result.stderr
+            
+        try:
+            data = json.loads(result.stdout)
+            if data.get("_type") == "playlist" and "entries" in data:
+                videos = [entry for entry in data["entries"] if entry]
+                log_event(f"Found {len(videos)} videos in playlist")
+                return videos, None
+        except json.JSONDecodeError as e:
+            log_error(f"JSON parsing failed: {e}")
+            return None, str(e)
+            
+        return None, "No playlist data found"
+
+    def _get_video_info_flat(self, url: str) -> Tuple[Optional[List[Dict]], Optional[str]]:
+        """Get video information using flat-playlist approach"""
+        command = self._build_base_command(["--flat-playlist", "--dump-json"])
+        command.append(url)
+        
+        result = subprocess.run(command, capture_output=True, text=True, encoding='utf-8')
+        
+        if result.returncode != 0:
+            log_error(f"Video info failed: {result.stderr}")
+            return None, result.stderr
+            
         videos = []
         playlist_video_ids = []
         is_playlist = False
+        
+        # Parse JSON output line by line
         for line in result.stdout.strip().split('\n'):
+            if not line.strip():
+                continue
+                
             try:
                 data = json.loads(line)
-                # Playlist ise _type=playlist, video ise _type=video
-                if data.get('_type') == 'playlist' or data.get('ie_key') == 'YoutubePlaylist':
+                
+                if self._is_playlist_data(data):
                     is_playlist = True
-                    # Playlist içindeki video id'lerini topla
-                    if 'entries' in data:
-                        for entry in data['entries']:
-                            if isinstance(entry, dict) and 'id' in entry:
-                                playlist_video_ids.append(entry['id'])
-                            elif isinstance(entry, str):
-                                playlist_video_ids.append(entry)
-                elif data.get('_type') == 'url' and 'id' in data:
-                    is_playlist = True
-                    playlist_video_ids.append(data['id'])
-                elif 'id' in data and data.get('_type') is None:
-                    # Bazı yt-dlp çıktılarında sadece id string'i dönebilir
-                    playlist_video_ids.append(data['id'])
+                    playlist_video_ids.extend(self._extract_video_ids(data))
                 else:
                     videos.append(data)
+                    
             except json.JSONDecodeError:
                 continue
-        # Eğer playlist ise, her video için detaylı bilgi çek
+        
+        # Get detailed info for playlist videos
         if is_playlist and playlist_video_ids:
-            detailed_videos = []
-            for vid in playlist_video_ids:
-                vid_url = f"https://www.youtube.com/watch?v={vid}"
-                cmd = ["yt-dlp", "--dump-json"]
-                if self.cookies_file and os.path.exists(self.cookies_file):
-                    cmd.extend(["--cookies", self.cookies_file])
-                cmd.append(vid_url)
-                res = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8')
-                if res.returncode == 0:
-                    try:
-                        detailed_videos.append(json.loads(res.stdout.strip()))
-                    except Exception:
-                        continue
-            log_event(f"get_video_info tamamlandı: {len(detailed_videos)} video bulundu (playlist).")
+            detailed_videos = self._get_detailed_video_info(playlist_video_ids)
+            log_event(f"Found {len(detailed_videos)} videos in playlist")
             return detailed_videos, None
-        log_event(f"get_video_info tamamlandı: {len(videos)} video bulundu.")
+        
+        log_event(f"Found {len(videos)} videos")
         return videos, None
 
-    def _run_yt_dlp_command(self, command, thread_id="unknown"):
-        log_event(f"yt-dlp komutu başlatıldı: {' '.join(command)}")
-        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, 
-                                 text=True, bufsize=1, universal_newlines=True, 
-                                 encoding='utf-8', errors='replace')
+    def _is_playlist_data(self, data: Dict) -> bool:
+        """Check if JSON data represents playlist information"""
+        return (data.get('_type') == 'playlist' or 
+                data.get('ie_key') == 'YoutubePlaylist' or
+                data.get('_type') == 'url')
+
+    def _extract_video_ids(self, data: Dict) -> List[str]:
+        """Extract video IDs from playlist data"""
+        video_ids = []
+        
+        if 'entries' in data:
+            for entry in data['entries']:
+                if isinstance(entry, dict) and 'id' in entry:
+                    video_ids.append(entry['id'])
+                elif isinstance(entry, str):
+                    video_ids.append(entry)
+        elif 'id' in data:
+            video_ids.append(data['id'])
+            
+        return video_ids
+
+    def _get_detailed_video_info(self, video_ids: List[str]) -> List[Dict]:
+        """Get detailed information for a list of video IDs"""
+        detailed_videos = []
+        
+        for vid_id in video_ids:
+            vid_url = f"https://www.youtube.com/watch?v={vid_id}"
+            command = self._build_base_command(["--dump-json"])
+            command.append(vid_url)
+            
+            result = subprocess.run(command, capture_output=True, text=True, encoding='utf-8')
+            
+            if result.returncode == 0:
+                try:
+                    detailed_videos.append(json.loads(result.stdout.strip()))
+                except json.JSONDecodeError:
+                    continue
+                    
+        return detailed_videos
+
+    def _build_base_command(self, base_args: List[str]) -> List[str]:
+        """Build base yt-dlp command with common arguments"""
+        command = ["yt-dlp"] + base_args
+        
+        # Add cookies if available
+        if self.cookies_file and os.path.exists(self.cookies_file):
+            command.extend(["--cookies", self.cookies_file])
+            
+        # Add FFmpeg location if available
+        if self.ffmpeg_path and os.path.exists(self.ffmpeg_path):
+            command.extend(["--ffmpeg-location", os.path.dirname(self.ffmpeg_path)])
+            
+        return command
+
+    def download_videos(self, urls: List[str], download_options: Dict[str, Any], 
+                       output_path: str) -> Iterator[Dict[str, Any]]:
+        """
+        Download videos with progress tracking
+        
+        Args:
+            urls: List of video URLs
+            download_options: Download configuration
+            output_path: Output directory
+            
+        Yields:
+            Progress updates as dictionaries
+        """
+        thread_id = download_options.get("thread_id", "unknown")
+        log_event(f"Starting download: urls={len(urls)}, thread_id={thread_id}")
+        
+        base_command = self._build_download_command(download_options, output_path)
+        
+        for url in urls:
+            log_event(f"Downloading: {url}")
+            command = base_command + [url]
+            
+            yield {"type": "status", "message": f"Starting download for: {url}"}
+            
+            for progress_update in self._run_yt_dlp_command(command, thread_id):
+                yield progress_update
+                
+            log_event(f"Download completed: {url}")
+
+    def _build_download_command(self, download_options: Dict[str, Any], 
+                               output_path: str) -> List[str]:
+        """Build the complete yt-dlp download command"""
+        command = self._build_base_command([])
+        
+        # Output path configuration
+        if output_path:
+            command.extend(["-o", f"{output_path}/%(playlist)s/%(title)s.%(ext)s"])
+        else:
+            command.extend(["-o", "%(playlist)s/%(title)s.%(ext)s"])
+        
+        # Quality and format selection
+        self._add_quality_options(command, download_options)
+        
+        # Subtitle options
+        self._add_subtitle_options(command, download_options)
+        
+        # Performance options
+        concurrent_fragments = int(download_options.get("concurrent_fragments", 5))
+        command.extend(["--concurrent-fragments", str(concurrent_fragments)])
+        
+        # Download archive
+        command.extend(["--download-archive", self.archive_path])
+        
+        return command
+
+    def _add_quality_options(self, command: List[str], options: Dict[str, Any]) -> None:
+        """Add quality and format options to command"""
+        quality = options.get("quality", "bestvideo+bestaudio/best")
+        merge_video_audio = options.get("merge_video_audio", True)
+        
+        if merge_video_audio and self.check_ffmpeg():
+            command.extend(["--merge-output-format", "mkv"])
+            command.extend(["--audio-quality", "0"])
+            command.extend(["--audio-format", "m4a"])
+            
+            if self.ffmpeg_path and self.ffmpeg_path != "ffmpeg":
+                command.extend(["--postprocessor-args", "ffmpeg:-c:v copy -c:a aac -strict experimental"])
+            
+            log_event("Video/audio merging enabled with FFmpeg")
+        
+        # Format selection based on quality
+        format_map = {
+            "best": "best",
+            "4K": "bestvideo[height<=2160]+bestaudio/best[height<=2160]",
+            "1440p": "bestvideo[height<=1440]+bestaudio/best[height<=1440]",
+            "1080p": "bestvideo[height<=1080]+bestaudio/best[height<=1080]",
+            "720p": "bestvideo[height<=720]+bestaudio/best[height<=720]",
+            "480p": "bestvideo[height<=480]+bestaudio/best[height<=480]",
+            "360p": "bestvideo[height<=360]+bestaudio/best[height<=360]",
+            "worst": "worst",
+        }
+        
+        format_string = format_map.get(quality, "bestvideo[height>=720]+bestaudio/best[height>=720]/bestvideo+bestaudio/best")
+        command.extend(["-f", format_string])
+        log_event(f"Quality format: {format_string}")
+
+    def _add_subtitle_options(self, command: List[str], options: Dict[str, Any]) -> None:
+        """Add subtitle options to command"""
+        if options.get("download_subtitles"):
+            subtitle_lang = options.get("subtitle_language", "tr")
+            if subtitle_lang == "all":
+                command.extend(["--write-subs", "--all-subs"])
+            else:
+                command.extend(["--write-subs", "--sub-langs", subtitle_lang])
+        
+        if options.get("auto_subtitles"):
+            auto_lang = options.get("auto_translate_language", "tr")
+            command.extend(["--write-auto-subs", "--sub-langs", auto_lang])
+        
+        if options.get("embed_subtitles"):
+            command.extend(["--embed-subs"])
+            log_event("Subtitles will be embedded in video")
+
+    def _run_yt_dlp_command(self, command: List[str], thread_id: str) -> Iterator[Dict[str, Any]]:
+        """
+        Execute yt-dlp command and parse output
+        
+        Args:
+            command: Complete yt-dlp command
+            thread_id: Thread identifier for tracking
+            
+        Yields:
+            Progress updates
+        """
+        log_event(f"Executing: {' '.join(command)}")
+        
+        try:
+            process = subprocess.Popen(
+                command, 
+                stdout=subprocess.PIPE, 
+                stderr=subprocess.PIPE,
+                text=True, 
+                bufsize=1, 
+                universal_newlines=True,
+                encoding='utf-8', 
+                errors='replace'
+            )
+        except Exception as e:
+            log_error(f"Failed to start process: {e}")
+            yield {"type": "error", "message": str(e), "thread_id": thread_id}
+            return
+        
         current_title = None
         current_ext = None
         video_title = None
         
+        # Process stdout line by line
         for line in iter(process.stdout.readline, ''):
-            # Her satırı log olarak gönder
             yield {"type": "log", "message": line.strip()}
             
-            # Video title'ı yakala - [info] satırından
-            if "[info]" in line and ":" in line:
-                # Video title'ı çıkar - daha spesifik kontroller
-                if "Downloading 1 format(s):" in line:
-                    # Format bilgisini atla
-                    continue
-                elif "Writing video subtitles to" in line:
-                    # Altyazı yazma mesajını atla
-                    continue
-                elif "Available formats for" in line:
-                    # Format listesi mesajını atla  
-                    continue
-                else:
-                    # Gerçek video title'ını yakala
-                    info_match = re.search(r'\[info\]\s+(.+?):', line)
-                    if info_match and not any(keyword in line.lower() for keyword in ['format', 'downloading', 'available', 'playlist', 'writing', 'subtitle']):
-                        potential_title = info_match.group(1).strip()
-                        if len(potential_title) > 10 and not potential_title.startswith('http') and not potential_title.startswith('['):
-                            video_title = potential_title
-                            log_event(f"Video title yakalandı: {video_title}")
+            # Extract video information
+            title_info = self._extract_video_info(line)
+            if title_info:
+                video_title, current_title, current_ext = title_info
             
-            # Video title'ını daha güvenilir bir şekilde yakala
-            if line.startswith('[youtube]') and ': Downloading webpage' in line:
-                # YouTube video ID'sinden sonra gelen title'ı yakala
-                youtube_match = re.search(r'\[youtube\]\s+(.+?):\s+Downloading webpage', line)
-                if youtube_match:
-                    video_id = youtube_match.group(1).strip()
-                    log_event(f"YouTube video ID yakalandı: {video_id}")
-            
-            # Daha güvenilir title yakalama
-            if '[download] Destination:' in line and not video_title:
-                dest_line = line.strip()
-                # Dosya yolundan title'ı çıkar
-                dest_match = re.search(r'Destination:\s+(.+)', dest_line)
-                if dest_match:
-                    file_path = dest_match.group(1).strip()
-                    filename = os.path.basename(file_path)
-                    # Dosya adından title'ı çıkar (uzantıyı kaldır)
-                    title_from_file = os.path.splitext(filename)[0]
-                    # Format kodlarını temizle (örn: .f137, .f140)
-                    title_cleaned = re.sub(r'\.[f]\d+$', '', title_from_file)
-                    if len(title_cleaned) > 5 and not video_title:
-                        video_title = title_cleaned
-                        log_event(f"Video title dosya adından yakalandı: {video_title}")
-            
-            # Birleştirme işlemi bilgilerini yakala
-            if "[Merger]" in line or "[ffmpeg]" in line:
-                log_event(f"Birleştirme işlemi: {line.strip()}")
-            
-            # [download] Destination: ... satırını yakala
-            if "[download] Destination:" in line:
-                dest = line.strip().split(":", 1)[-1].strip()
-                # Dosya adı ve uzantısını ayıkla
-                filename = os.path.basename(dest)
-                current_title, current_ext = os.path.splitext(filename)
-                if current_ext.startswith('.'):
-                    current_ext = current_ext[1:]
-                log_event(f"Destination yakalandı: title={current_title}, ext={current_ext}")
-            
-            # Parse progress - daha basit ve esnek regex pattern
-            # [download]   3.9% of  355.08MiB at    3.74MiB/s ETA 01:31
-            if "[download]" in line and "%" in line and " of " in line and " at " in line:
-                # Daha esnek regex ile parse et
-                progress_match = re.search(r'(\d+\.\d+)%.*?of\s+(\S+).*?at\s+(\S+)(?:.*?ETA\s+(\S+))?', line)
-                if progress_match:
-                    # En iyi title'ı belirle
-                    display_title = video_title or current_title or "Unknown"
-                    display_ext = current_ext or "Unknown"
-                    
-                    # Önce log eventini gönder
-                    progress_log = f"İndirme ilerlemesi: %{progress_match.group(1)} of {progress_match.group(2)} at {progress_match.group(3)} ETA {progress_match.group(4) if progress_match.group(4) else 'N/A'} | {display_title}.{display_ext}"
-                    yield {"type": "log", "message": progress_log}
-                    
-                    # Sonra progress eventini gönder
-                    progress = {
-                        "type": "progress",
-                        "percent": float(progress_match.group(1)),
-                        "total_size": progress_match.group(2),
-                        "speed": progress_match.group(3),
-                        "eta": progress_match.group(4) if progress_match.group(4) else "N/A",
-                        "title": display_title,
-                        "ext": display_ext,
-                        "thread_id": thread_id
-                    }
-                    yield progress
-            
-            # Format seçimi bilgisini yakala
-            format_match = re.search(r'\[info\]\s+(\d+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)', line)
-            if format_match:
-                format_id = format_match.group(1)
-                extension = format_match.group(2)
-                resolution = format_match.group(3)
-                filesize = format_match.group(4)
-                log_event(f"Format seçildi: ID={format_id}, Ext={extension}, Res={resolution}, Size={filesize}")
+            # Parse progress information
+            progress_info = self._parse_progress_line(line, video_title, current_title, current_ext, thread_id)
+            if progress_info:
+                yield progress_info
         
         process.stdout.close()
         process.wait()
         
-        stderr_output = process.stderr.read()
+        # Handle process completion
+        stderr_output = process.stderr.read() if process.stderr else ""
+        
         if process.returncode != 0:
-            log_event(f"yt-dlp hata: {stderr_output.strip()}")
-            yield {"type": "error", "message": stderr_output.strip(), "thread_id": thread_id, "title": video_title or current_title or "Unknown"}
+            log_error(f"yt-dlp failed: {stderr_output}")
+            yield {
+                "type": "error", 
+                "message": stderr_output.strip(), 
+                "thread_id": thread_id,
+                "title": video_title or current_title or "Unknown"
+            }
         else:
-            log_event("yt-dlp tamamlandı: Download finished.")
-            yield {"type": "complete", "message": "Download finished.", "thread_id": thread_id, "title": video_title or current_title or "Unknown"}
+            log_event("Download completed successfully")
+            yield {
+                "type": "complete", 
+                "message": "Download finished", 
+                "thread_id": thread_id,
+                "title": video_title or current_title or "Unknown"
+            }
 
-    def download_videos(self, urls, download_options, output_path):
-        log_event(f"download_videos çağrıldı: urls={urls}, options={download_options}, output_path={output_path}")
-        thread_id = download_options.get("thread_id", "unknown")
-        base_command = ["yt-dlp"]
+    def _extract_video_info(self, line: str) -> Optional[Tuple[str, str, str]]:
+        """Extract video information from yt-dlp output line"""
+        video_title = None
+        current_title = None
+        current_ext = None
         
-        # Add cookies if available
-        if self.cookies_file and os.path.exists(self.cookies_file):
-            base_command.extend(["--cookies", self.cookies_file])
+        # Extract title from info line
+        if "[info]" in line and ":" in line:
+            if not any(keyword in line.lower() for keyword in 
+                      ['format', 'downloading', 'available', 'playlist', 'writing', 'subtitle']):
+                match = self.TITLE_PATTERN.search(line)
+                if match:
+                    potential_title = match.group(1).strip()
+                    if len(potential_title) > 10 and not potential_title.startswith(('http', '[')):
+                        video_title = potential_title
         
-        # Add ffmpeg location if available
-        if self.ffmpeg_path and os.path.exists(self.ffmpeg_path):
-            base_command.extend(["--ffmpeg-location", os.path.dirname(self.ffmpeg_path)])
+        # Extract title from destination line
+        if '[download] Destination:' in line:
+            match = self.DESTINATION_PATTERN.search(line)
+            if match:
+                file_path = match.group(1).strip()
+                filename = os.path.basename(file_path)
+                current_title, ext = os.path.splitext(filename)
+                current_ext = ext[1:] if ext.startswith('.') else ext
+                
+                # Clean up format codes
+                current_title = re.sub(r'\.[f]\d+$', '', current_title)
+                if len(current_title) > 5 and not video_title:
+                    video_title = current_title
         
-        # Add output path
-        if output_path:
-            base_command.extend(["-o", f"{output_path}/%(playlist)s/%(title)s.%(ext)s"])
-        else:
-            base_command.extend(["-o", "%(playlist)s/%(title)s.%(ext)s"]) # Default to current directory
+        if video_title or current_title:
+            return video_title, current_title, current_ext
+        return None
 
-        # Add quality options with better format selection
-        quality = download_options.get("quality", "bestvideo+bestaudio/best")
-        merge_video_audio = download_options.get("merge_video_audio", True)
+    def _parse_progress_line(self, line: str, video_title: Optional[str], 
+                           current_title: Optional[str], current_ext: Optional[str], 
+                           thread_id: str) -> Optional[Dict[str, Any]]:
+        """Parse progress information from yt-dlp output line"""
+        if not ("[download]" in line and "%" in line and " of " in line and " at " in line):
+            return None
         
-        # Video/audio birleştirme ayarları
-        if merge_video_audio:
-            # FFmpeg kontrolü
-            if not self.check_ffmpeg():
-                log_event("Uyarı: FFmpeg bulunamadı, birleştirme işlemi devre dışı bırakılıyor")
-                merge_video_audio = False
-            else:
-                # FFmpeg ile otomatik birleştirme - kaliteyi koruyacak parametreler
-                base_command.extend(["--merge-output-format", "mkv"])
-                # Post-processor olarak FFmpeg kullan - uygulama içi FFmpeg'i kullan
-                if self.ffmpeg_path and self.ffmpeg_path != "ffmpeg":
-                    base_command.extend(["--postprocessor-args", f"ffmpeg:-c:v copy -c:a aac -strict experimental"])
-                    # FFmpeg yolunu belirt
-                    base_command.extend(["--ffmpeg-location", os.path.dirname(self.ffmpeg_path)])
-                else:
-                    base_command.extend(["--postprocessor-args", "ffmpeg:-c:v copy -c:a aac -strict experimental"])
-                # Audio kalitesini artır
-                base_command.extend(["--audio-quality", "0"])
-                # Audio formatını belirt
-                base_command.extend(["--audio-format", "m4a"])
-                # Birleştirme işlemi hakkında detaylı bilgi
-                log_event("Birleştirme ayarları: mkv format, FFmpeg ile video ve ses birleştirme aktif")
+        match = self.PROGRESS_PATTERN.search(line)
+        if not match:
+            return None
         
-        if not merge_video_audio:
-            log_event("Birleştirme devre dışı: Video ve ses dosyaları ayrı ayrı indirilecek")
+        display_title = video_title or current_title or "Unknown"
+        display_ext = current_ext or "Unknown"
         
-        # Daha spesifik format seçimi - kaliteyi garanti etmek için
-        if quality == "best":
-            base_command.extend(["-f", "best"])
-            log_event("Format seçimi: best")
-        elif quality == "bestvideo+bestaudio/best":
-            # En iyi video + en iyi ses, yüksek kalite öncelikli
-            base_command.extend(["-f", "bestvideo[height>=720]+bestaudio/best[height>=720]/bestvideo+bestaudio/best"])
-            log_event("Format seçimi: bestvideo[height>=720]+bestaudio/best[height>=720]/bestvideo+bestaudio/best")
-        elif quality == "4K":
-            base_command.extend(["-f", "bestvideo[height<=2160][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=2160]+bestaudio/best[height<=2160]/best"])
-            log_event("Format seçimi: 4K - bestvideo[height<=2160]+bestaudio")
-        elif quality == "1440p":
-            base_command.extend(["-f", "bestvideo[height<=1440][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=1440]+bestaudio/best[height<=1440]/best"])
-            log_event("Format seçimi: 1440p - bestvideo[height<=1440]+bestaudio")
-        elif quality == "1080p":
-            base_command.extend(["-f", "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best[height<=1080]/best"])
-            log_event("Format seçimi: 1080p - bestvideo[height<=1080]+bestaudio")
-        elif quality == "720p":
-            base_command.extend(["-f", "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=720]+bestaudio/best[height<=720]/best"])
-            log_event("Format seçimi: 720p - bestvideo[height<=720]+bestaudio")
-        elif quality == "480p":
-            base_command.extend(["-f", "bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=480]+bestaudio/best[height<=480]/best"])
-            log_event("Format seçimi: 480p - bestvideo[height<=480]+bestaudio")
-        elif quality == "360p":
-            base_command.extend(["-f", "bestvideo[height<=360][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=360]+bestaudio/best[height<=360]/best"])
-            log_event("Format seçimi: 360p - bestvideo[height<=360]+bestaudio")
-        elif quality == "worst":
-            base_command.extend(["-f", "worst"])
-            log_event("Format seçimi: worst")
-        else:
-            # Varsayılan olarak en iyi kalite
-            base_command.extend(["-f", "bestvideo[height>=720]+bestaudio/best[height>=720]/bestvideo+bestaudio/best"])
-            log_event("Format seçimi: default - bestvideo[height>=720]+bestaudio")
+        return {
+            "type": "progress",
+            "percent": float(match.group(1)),
+            "total_size": match.group(2),
+            "speed": match.group(3),
+            "eta": match.group(4) if match.group(4) else "N/A",
+            "title": display_title,
+            "ext": display_ext,
+            "thread_id": thread_id
+        }
 
-        # Add subtitle options
-        if download_options.get("download_subtitles"):
-            subtitle_lang = download_options.get("subtitle_language", "tr")
-            if subtitle_lang == "all":
-                base_command.extend(["--write-subs", "--all-subs"]) # Download all available subtitles
-            else:
-                base_command.extend(["--write-subs", "--sub-langs", subtitle_lang]) # Download specific language
+    def set_cookies_file(self, cookies_file: str) -> None:
+        """
+        Set the cookies file path for authentication
         
-        # Add auto-translated subtitles
-        if download_options.get("auto_subtitles"):
-            auto_lang = download_options.get("auto_translate_language", "tr")
-            base_command.extend(["--write-auto-subs", "--sub-langs", auto_lang]) # Download auto-generated subtitles in specific language
-
-        # Embed subtitles into video
-        if download_options.get("embed_subtitles"):
-            base_command.extend(["--embed-subs"]) # Embed subtitles into video file
-            log_event("Altyazılar video dosyasına gömülecek")
-
-        # Add concurrent downloads
-        concurrent_fragments = int(download_options.get("concurrent_fragments", 5))
-        base_command.extend(["--concurrent-fragments", str(concurrent_fragments)])
-
-        # Add download archive
-        base_command.extend(["--download-archive", self.archive_path])
-
-        for url in urls:
-            log_event(f"İndirme başlatılıyor: {url}")
-            command = base_command + [url]
-            log_event(f"Tam yt-dlp komutu: {' '.join(command)}")
-            yield {"type": "status", "message": f"Starting download for: {url}"}
-            for progress_update in self._run_yt_dlp_command(command, thread_id):
-                yield progress_update
-            log_event(f"İndirme tamamlandı: {url}")
-
-    def set_cookies_file(self, cookies_file):
-        """Set the cookies file path for authentication"""
+        Args:
+            cookies_file: Path to cookies file
+        """
         self.cookies_file = cookies_file
+        log_event(f"Cookies file set: {cookies_file}")

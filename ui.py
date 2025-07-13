@@ -1,23 +1,348 @@
+"""
+YouTube Downloader - User Interface Module
+Modern Flet-based GUI for YouTube video downloading
+"""
+
 import flet as ft
 from downloader import Downloader
 import threading
 import os
 import subprocess
 import sys
-from utils import log_event
-from typing import Dict
+from utils import log_event, log_error, log_warning, get_disk_space, format_bytes
+from typing import Dict, List, Optional
 import queue
-import asyncio
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 import time
 
+# Global variables for progress tracking
 progress_event_queue = queue.Queue()
 download_counter = 0
 
-def create_app_ui(page: ft.Page):
+# UI Configuration constants
+UI_CONFIG = {
+    "spacing": 15,
+    "card_spacing": 10,
+    "progress_height": 200,
+    "video_list_height": 300,
+    "thumbnail_size": {"width": 60, "height": 34},
+    "colors": {
+        "primary": "#4FC3F7",
+        "success": "#43A047",
+        "error": "#F44336",
+        "warning": "#FFA726",
+        "info": "#2196F3",
+        "background": "#181A20",
+        "border": "#333"
+    }
+}
+
+def create_app_ui(page: ft.Page) -> ft.Row:
+    """
+    Create the main application UI
+    
+    Args:
+        page: Flet page instance
+        
+    Returns:
+        Main UI container
+    """
+    # Initialize downloader
     downloader = Downloader()
     
+    # Initialize UI components
+    ui_components = _initialize_ui_components(page, downloader)
+    
+    # Create layout sections
+    main_column = _create_main_section(ui_components)
+    settings_column = _create_settings_section(ui_components)
+    videos_column = _create_videos_section(ui_components)
+    
+    # Set up event handlers
+    _setup_event_handlers(ui_components, downloader, page)
+    
+    # Start progress monitoring
+    _start_progress_monitoring(ui_components, page)
+    
+    return ft.Row(
+        [
+            ft.Column([main_column, settings_column, ui_components["download_button"]], expand=1, spacing=20),
+            ft.VerticalDivider(),
+            ft.Column([videos_column], expand=2),
+        ],
+        expand=True,
+        spacing=20,
+    )
+
+def _initialize_ui_components(page: ft.Page, downloader: Downloader) -> Dict[str, ft.Control]:
+    """Initialize all UI components"""
+    
+    # File pickers
+    file_picker = ft.FilePicker(on_result=lambda e: _on_folder_selected(e, components, page))
+    cookies_picker = ft.FilePicker(on_result=lambda e: _on_cookies_selected(e, components, downloader, page))
+    page.overlay.extend([file_picker, cookies_picker])
+    
+    # Input components
+    components = {
+        "download_type": ft.RadioGroup(
+            content=ft.Row([
+                ft.Radio(value="channel", label="Channel"),
+                ft.Radio(value="playlist", label="Playlist"),
+                ft.Radio(value="video", label="Video"),
+            ]),
+            value="channel",
+        ),
+        "url_input": ft.TextField(
+            label="YouTube URL", 
+            hint_text="Enter a YouTube channel, playlist, or video URL", 
+            expand=True
+        ),
+        "info_text": ft.Text(),
+        "progress_bar": ft.ProgressBar(width=400, visible=False),
+        "video_list": ft.ListView(expand=True, spacing=10, auto_scroll=True),
+        
+        # Quality settings
+        "merge_video_audio_checkbox": ft.Checkbox(label="Merge video and audio", value=True),
+        "subtitle_checkbox": ft.Checkbox(label="Download Subtitles", value=True),
+        "auto_subtitle_checkbox": ft.Checkbox(label="Auto-translated subtitles", value=False),
+        "embed_subtitles_checkbox": ft.Checkbox(label="Embed subtitles in video", value=False),
+        
+        # Language dropdowns
+        "subtitle_language_dropdown": _create_language_dropdown("Subtitle Language", "tr"),
+        "auto_translate_language_dropdown": _create_language_dropdown("Auto-translate to", "tr"),
+        
+        # Path settings
+        "download_path_text": ft.TextField(label="Download Path", read_only=True, expand=True),
+        "cookies_path_text": ft.TextField(
+            label="Cookies File (Optional)", 
+            read_only=True, 
+            expand=True, 
+            hint_text="Select cookies.txt file for member-only videos"
+        ),
+        
+        # Sliders
+        "concurrent_downloads_slider": ft.Slider(
+            min=1, max=10, divisions=9, 
+            label="{value} concurrent fragments", 
+            value=4
+        ),
+        "concurrent_videos_slider": ft.Slider(
+            min=1, max=5, divisions=4, 
+            label="{value} videos at once", 
+            value=2
+        ),
+        
+        # Buttons
+        "validate_button": ft.ElevatedButton("Validate"),
+        "download_button": ft.ElevatedButton("Start Download", disabled=True),
+        "reset_button": ft.ElevatedButton(
+            "New Download", 
+            bgcolor="green", 
+            color="white"
+        ),
+        "clear_archive_button": ft.ElevatedButton(
+            "Clear Archive", 
+            bgcolor="orange", 
+            color="white"
+        ),
+        "check_issues_button": ft.ElevatedButton(
+            "Check Issues", 
+            bgcolor="purple", 
+            color="white"
+        ),
+        "select_path_button": ft.ElevatedButton("Select Folder"),
+        "select_cookies_button": ft.ElevatedButton("Select Cookies"),
+        "extract_cookies_button": ft.ElevatedButton(
+            "Extract from Browser", 
+            bgcolor="blue", 
+            color="white"
+        ),
+        
+        # File pickers
+        "file_picker": file_picker,
+        "cookies_picker": cookies_picker,
+        
+        # Progress display
+        "progress_display": ft.ListView([
+            ft.Text(
+                "No downloads yet. Progress will appear here when you start downloading.", 
+                size=12, 
+                color="#666", 
+                italic=True
+            )
+        ], spacing=5, expand=True, auto_scroll=True),
+        
+        # Data storage
+        "validated_video_urls": [],
+        "video_cards_dict": {},
+    }
+    
+    # Add merge info text
+    components["merge_info"] = ft.Text(
+        "🔧 FFmpeg will be automatically applied. Required for merging.",
+        size=11,
+        color="blue",
+        weight=ft.FontWeight.W_500
+    )
+    
+    return components
+
+def _create_language_dropdown(label: str, default_value: str) -> ft.Dropdown:
+    """Create a language selection dropdown"""
+    # Base options for all dropdowns
+    base_options = [
+        ft.dropdown.Option("en", "English"),
+        ft.dropdown.Option("tr", "Türkçe"),
+        ft.dropdown.Option("es", "Español"),
+        ft.dropdown.Option("fr", "Français"),
+        ft.dropdown.Option("de", "Deutsch"),
+        ft.dropdown.Option("it", "Italiano"),
+        ft.dropdown.Option("pt", "Português"),
+        ft.dropdown.Option("ru", "Русский"),
+        ft.dropdown.Option("ja", "日本語"),
+        ft.dropdown.Option("ko", "한국어"),
+        ft.dropdown.Option("zh", "中文"),
+        ft.dropdown.Option("ar", "العربية"),
+        ft.dropdown.Option("hi", "हिन्दी"),
+    ]
+    
+    # Add "All Available" option only for subtitle dropdowns
+    if "Subtitle" in label:
+        base_options.append(ft.dropdown.Option("all", "All Available"))
+    
+    return ft.Dropdown(
+        label=label,
+        hint_text=f"Select {label.lower()}",
+        options=base_options,
+        value=default_value,
+        width=200
+    )
+
+def _create_main_section(components: Dict[str, ft.Control]) -> ft.Column:
+    """Create the main input section"""
+    return ft.Column([
+        ft.Text("1. Select Download Type", size=16, weight=ft.FontWeight.BOLD),
+        components["download_type"],
+        ft.Text("2. Enter URL and Validate", size=16, weight=ft.FontWeight.BOLD),
+        ft.Row([components["url_input"], components["validate_button"]]),
+        components["info_text"],
+        components["progress_bar"],
+        ft.Row([
+            components["reset_button"], 
+            components["clear_archive_button"], 
+            components["check_issues_button"]
+        ], alignment=ft.MainAxisAlignment.CENTER),
+    ], spacing=UI_CONFIG["spacing"])
+
+def _create_settings_section(components: Dict[str, ft.Control]) -> ft.Column:
+    """Create the settings section"""
+    return ft.Column([
+        ft.Text("Download Settings", size=16, weight=ft.FontWeight.BOLD),
+        components["merge_video_audio_checkbox"],
+        components["merge_info"],
+        components["subtitle_checkbox"],
+        ft.Row([components["subtitle_language_dropdown"]], alignment=ft.MainAxisAlignment.START),
+        components["auto_subtitle_checkbox"],
+        ft.Row([components["auto_translate_language_dropdown"]], alignment=ft.MainAxisAlignment.START),
+        components["embed_subtitles_checkbox"],
+        ft.Row([components["download_path_text"], components["select_path_button"]]),
+        ft.Text("Authentication (for member-only videos)", size=14, weight=ft.FontWeight.BOLD),
+        ft.Row([components["cookies_path_text"], components["select_cookies_button"]]),
+        ft.Row([components["extract_cookies_button"]], alignment=ft.MainAxisAlignment.CENTER),
+        ft.Text("Concurrent Fragments"),
+        components["concurrent_downloads_slider"],
+        ft.Text("Concurrent Videos"),
+        components["concurrent_videos_slider"],
+    ])
+
+def _create_videos_section(components: Dict[str, ft.Control]) -> ft.Column:
+    """Create the videos display section"""
+    return ft.Column([
+        ft.Text("3. Found Videos", size=16, weight=ft.FontWeight.BOLD),
+        ft.Container(
+            content=components["video_list"],
+            border=ft.border.all(1, "gray"),
+            border_radius=5,
+            padding=10,
+            expand=True,
+        ),
+        ft.Container(
+            content=ft.Text("Download Progress", size=15, weight=ft.FontWeight.BOLD),
+            margin=ft.margin.only(top=10)
+        ),
+        ft.Container(
+            content=components["progress_display"],
+            height=UI_CONFIG["progress_height"],
+            expand=True,
+            border=ft.border.all(1, UI_CONFIG["colors"]["border"]),
+            border_radius=6,
+            padding=10,
+            bgcolor="#1A1A1A",
+        ),
+    ], expand=True)
+
+def _on_folder_selected(e: ft.FilePickerResultEvent, components: Dict[str, ft.Control], page: ft.Page):
+    """Handles the result of the folder selection dialog."""
+    if e.path:
+        components["download_path_text"].value = e.path
+        page.update()
+        log_event(f"user_action: selected_download_path, path={e.path}")
+
+def _on_cookies_selected(e: ft.FilePickerResultEvent, components: Dict[str, ft.Control], downloader: Downloader, page: ft.Page):
+    """Handles the result of the cookies file selection dialog."""
+    if e.files:
+        cookies_file = e.files[0].path
+        components["cookies_path_text"].value = cookies_file
+        downloader.set_cookies_file(cookies_file)
+        page.update()
+        log_event(f"user_action: selected_cookies_file, file={cookies_file}")
+
+def extract_cookies_from_browser(components: Dict[str, ft.Control], downloader: Downloader, page: ft.Page):
+    """Extract cookies from browser"""
+    components["info_text"].value = "Cookies are being extracted from the browser..."
+    components["info_text"].color = "blue"
+    page.update()
+    log_event(f"user_action: extracted_cookies_from_browser")
+    
+    try:
+        # Run cookie extractor script
+        script_path = os.path.join(os.path.dirname(__file__), "cookie_extractor.py")
+        result = subprocess.run([sys.executable, script_path, "--browser", "auto"], capture_output=True, text=True, timeout=30)
+        
+        if result.returncode == 0:
+            # If successful, automatically select cookies file
+            cookies_file = os.path.join(os.path.dirname(__file__), "youtube_cookies.txt")
+            if os.path.exists(cookies_file):
+                components["cookies_path_text"].value = cookies_file
+                downloader.set_cookies_file(cookies_file)
+                components["info_text"].value = "Cookies successfully extracted and selected!"
+                components["info_text"].color = "green"
+                log_event(f"user_action: cookies_extracted_and_selected, file={cookies_file}")
+            else:
+                components["info_text"].value = "Cookies extracted but file not found."
+                components["info_text"].color = "orange"
+                log_event(f"user_action: cookies_extracted_but_file_not_found, file={cookies_file}")
+        else:
+            components["info_text"].value = f"Cookies extraction error: {result.stderr}"
+            components["info_text"].color = "red"
+            log_event(f"user_action: cookies_extraction_failed, error={result.stderr}")
+            
+    except subprocess.TimeoutExpired:
+        components["info_text"].value = "Cookies extraction timed out."
+        components["info_text"].color = "red"
+        log_event(f"user_action: cookies_extraction_timed_out")
+    except Exception as e:
+        components["info_text"].value = f"Cookies extraction error: {str(e)}"
+        components["info_text"].color = "red"
+        log_event(f"user_action: cookies_extraction_error, error={str(e)}")
+    
+    page.update()
+
+def _setup_event_handlers(components: Dict[str, ft.Control], downloader: Downloader, page: ft.Page):
+    """Set up event handlers for UI components."""
+    
+    # Format duration function
     def format_duration(seconds):
         """Saniyeyi saat:dakika:saniye formatına çevirir"""
         if not seconds:
@@ -32,366 +357,114 @@ def create_app_ui(page: ft.Page):
         else:
             return f"{minutes:02d}:{secs:02d}"
     
-    # File Picker for selecting download directory
-    def on_dialog_result(e: ft.FilePickerResultEvent):
-        if e.path:
-            download_path_text.value = e.path
-            page.update()
-            log_event(f"user_action: selected_download_path, path={e.path}")
-
-    # File Picker for selecting cookies file
+    # File Picker button events
+    components["select_path_button"].on_click = lambda _: components["file_picker"].get_directory_path()
+    components["select_cookies_button"].on_click = lambda _: components["cookies_picker"].pick_files(allowed_extensions=["txt"], allow_multiple=False)
+    components["extract_cookies_button"].on_click = lambda _: extract_cookies_from_browser(components, downloader, page)
     
-    def on_cookies_dialog_result(e: ft.FilePickerResultEvent):
-        if e.files:
-            cookies_file = e.files[0].path
-            cookies_path_text.value = cookies_file
-            downloader.set_cookies_file(cookies_file)
-            page.update()
-            log_event(f"user_action: selected_cookies_file, file={cookies_file}")
-
-    def extract_cookies_from_browser(e):
-        """Tarayıcıdan cookies çıkarma işlemi"""
-        info_text.value = "Cookies are being extracted from the browser..."
-        info_text.color = "blue"
-        page.update()
-        log_event(f"user_action: extracted_cookies_from_browser")
-        
-        try:
-            # Cookie extractor scriptini çalıştır
-            script_path = os.path.join(os.path.dirname(__file__), "cookie_extractor.py")
-            result = subprocess.run([sys.executable, script_path, "--browser", "auto"], capture_output=True, text=True, timeout=30)
-            
-            if result.returncode == 0:
-                # Başarılı olursa cookies dosyasını otomatik olarak seç
-                cookies_file = os.path.join(os.path.dirname(__file__), "youtube_cookies.txt")
-                if os.path.exists(cookies_file):
-                    cookies_path_text.value = cookies_file
-                    downloader.set_cookies_file(cookies_file)
-                    info_text.value = "Cookies successfully extracted and selected!"
-                    info_text.color = "green"
-                    log_event(f"user_action: cookies_extracted_and_selected, file={cookies_file}")
-                else:
-                    info_text.value = "Cookies extracted but file not found."
-                    info_text.color = "orange"
-                    log_event(f"user_action: cookies_extracted_but_file_not_found, file={cookies_file}")
-            else:
-                info_text.value = f"Cookies extraction error: {result.stderr}"
-                info_text.color = "red"
-                log_event(f"user_action: cookies_extraction_failed, error={result.stderr}")
-                
-        except subprocess.TimeoutExpired:
-            info_text.value = "Cookies extraction timed out."
-            info_text.color = "red"
-            log_event(f"user_action: cookies_extraction_timed_out")
-        except Exception as e:
-            info_text.value = f"Cookies extraction error: {str(e)}"
-            info_text.color = "red"
-            log_event(f"user_action: cookies_extraction_error, error={str(e)}")
-        
-        page.update()
-
-    file_picker = ft.FilePicker(on_result=on_dialog_result)
-    cookies_picker = ft.FilePicker(on_result=on_cookies_dialog_result)
-    page.overlay.extend([file_picker, cookies_picker])
-
-    # --- UI Components ---
-    download_type = ft.RadioGroup(
-        content=ft.Row([
-            ft.Radio(value="channel", label="Channel"),
-            ft.Radio(value="playlist", label="Playlist"),
-            ft.Radio(value="video", label="Video"),
-        ]),
-        value="channel",
-    )
-
-    url_input = ft.TextField(label="YouTube URL", hint_text="Enter a YouTube channel, playlist, or video URL", expand=True)
-    info_text = ft.Text()
-    progress_bar = ft.ProgressBar(width=400, visible=False)
-    video_list = ft.ListView(expand=True, spacing=10, auto_scroll=True)
-
-    # Video kalitesi ayarları
-    merge_video_audio_checkbox = ft.Checkbox(label="Merge video and audio", value=True)
-    merge_info = ft.Text(
-        "🔧 FFmpeg will be automatically applied. Required for merging.",
-        size=11,
-        color="blue",
-        weight=ft.FontWeight.W_500
-    )
-    subtitle_checkbox = ft.Checkbox(label="Download Subtitles", value=True)
-    auto_subtitle_checkbox = ft.Checkbox(label="Auto-translated subtitles", value=False)
-    embed_subtitles_checkbox = ft.Checkbox(label="Embed subtitles in video", value=False)
-    
-    # Altyazı dili seçimi
-    subtitle_language_dropdown = ft.Dropdown(
-        label="Subtitle Language",
-        hint_text="Select subtitle language",
-        options=[
-            ft.dropdown.Option("en", "English"),
-            ft.dropdown.Option("tr", "Türkçe"),
-            ft.dropdown.Option("es", "Español"),
-            ft.dropdown.Option("fr", "Français"),
-            ft.dropdown.Option("de", "Deutsch"),
-            ft.dropdown.Option("it", "Italiano"),
-            ft.dropdown.Option("pt", "Português"),
-            ft.dropdown.Option("ru", "Русский"),
-            ft.dropdown.Option("ja", "日本語"),
-            ft.dropdown.Option("ko", "한국어"),
-            ft.dropdown.Option("zh", "中文"),
-            ft.dropdown.Option("ar", "العربية"),
-            ft.dropdown.Option("hi", "हिन्दी"),
-            ft.dropdown.Option("all", "All Available"),
-        ],
-        value="tr",
-        width=200
-    )
-    
-    # Otomatik çeviri dili seçimi
-    auto_translate_language_dropdown = ft.Dropdown(
-        label="Auto-translate to",
-        hint_text="Select target language",
-        options=[
-            ft.dropdown.Option("tr", "Türkçe"),
-            ft.dropdown.Option("en", "English"),
-            ft.dropdown.Option("es", "Español"),
-            ft.dropdown.Option("fr", "Français"),
-            ft.dropdown.Option("de", "Deutsch"),
-            ft.dropdown.Option("it", "Italiano"),
-            ft.dropdown.Option("pt", "Português"),
-            ft.dropdown.Option("ru", "Русский"),
-            ft.dropdown.Option("ja", "日本語"),
-            ft.dropdown.Option("ko", "한국어"),
-            ft.dropdown.Option("zh", "中文"),
-            ft.dropdown.Option("ar", "العربية"),
-            ft.dropdown.Option("hi", "हिन्दी"),
-        ],
-        value="tr",
-        width=200
-    )
-    download_path_text = ft.TextField(label="Download Path", read_only=True, expand=True)
-    select_path_button = ft.ElevatedButton("Select Folder", on_click=lambda _: file_picker.get_directory_path())
-    
-    # Cookies file selection
-    cookies_path_text = ft.TextField(label="Cookies File (Optional)", read_only=True, expand=True, hint_text="Select cookies.txt file for member-only videos")
-    select_cookies_button = ft.ElevatedButton("Select Cookies", on_click=lambda _: cookies_picker.pick_files(allowed_extensions=["txt"], allow_multiple=False))
-    extract_cookies_button = ft.ElevatedButton("Extract from Browser", on_click=extract_cookies_from_browser, bgcolor="blue", color="white")
-    
-    concurrent_downloads_slider = ft.Slider(min=1, max=10, divisions=9, label="{value} concurrent fragments", value=4)
-    
-    # Aynı anda kaç video indirileceğini ayarlayan slider
-    concurrent_videos_slider = ft.Slider(min=1, max=5, divisions=4, label="{value} videos at once", value=2)
-
-    # Butonlar
-    validate_button = ft.ElevatedButton("Validate")
-    download_button = ft.ElevatedButton("Start Download", disabled=True)
-    reset_button = ft.ElevatedButton("New Download", on_click=lambda _: reset_application(), bgcolor="green", color="white")
-    clear_archive_button = ft.ElevatedButton("Clear Archive", on_click=lambda _: clear_download_archive(), bgcolor="orange", color="white")
-    check_issues_button = ft.ElevatedButton("Check Issues", on_click=lambda _: check_download_issues(), bgcolor="purple", color="white")
-    
-    def clear_download_archive():
-        """Download archive dosyasını temizler"""
-        try:
-            archive_path = downloader.archive_path
-            if os.path.exists(archive_path):
-                os.remove(archive_path)
-                info_text.value = "Download archive cleared! Previously downloaded videos will be downloaded again."
-                info_text.color = "green"
-                log_event("user_action: download_archive_cleared")
-            else:
-                info_text.value = "No archive file found."
-                info_text.color = "orange"
-                log_event("user_action: no_archive_file_found")
-            page.update()
-        except Exception as e:
-            info_text.value = f"Error clearing archive: {e}"
-            info_text.color = "red"
-            log_event(f"user_action: archive_clear_error, error={e}")
-            page.update()
-    
-    def check_download_issues():
-        """Download sorunlarını kontrol eder"""
-        issues = []
-        
-        # 1. yt-dlp versiyonu kontrol et
-        try:
-            result = subprocess.run(["yt-dlp", "--version"], capture_output=True, text=True, timeout=10)
-            if result.returncode == 0:
-                version = result.stdout.strip()
-                issues.append(f"✅ yt-dlp version: {version}")
-            else:
-                issues.append("❌ yt-dlp not working properly")
-        except Exception as e:
-            issues.append(f"❌ yt-dlp error: {e}")
-        
-        # 2. İnternet bağlantısı kontrol et
-        try:
-            result = subprocess.run(["ping", "youtube.com", "-n", "1"], capture_output=True, text=True, timeout=5)
-            if result.returncode == 0:
-                issues.append("✅ Internet connection: OK")
-            else:
-                issues.append("❌ Internet connection: Failed")
-        except Exception:
-            issues.append("❌ Internet connection: Cannot test")
-        
-        # 3. Disk alanı kontrol et
-        try:
-            import shutil
-            download_path = download_path_text.value or "."
-            free_space = shutil.disk_usage(download_path).free / (1024**3)  # GB
-            if free_space > 1:
-                issues.append(f"✅ Disk space: {free_space:.1f} GB available")
-            else:
-                issues.append(f"⚠️ Disk space: Only {free_space:.1f} GB available")
-        except Exception as e:
-            issues.append(f"❌ Disk space check failed: {e}")
-        
-        # 4. FFmpeg kontrol et
-        if downloader.check_ffmpeg():
-            issues.append("✅ FFmpeg: Available")
-        else:
-            issues.append("❌ FFmpeg: Not available (video merging may fail)")
-        
-        # 5. Cookies kontrol et
-        if downloader.cookies_file and os.path.exists(downloader.cookies_file):
-            issues.append("✅ Cookies: Available")
-        else:
-            issues.append("⚠️ Cookies: Not set (member-only videos may fail)")
-        
-        # 6. Archive dosyası kontrol et
-        if os.path.exists(downloader.archive_path):
-            with open(downloader.archive_path, 'r', encoding='utf-8') as f:
-                archive_lines = len(f.readlines())
-            issues.append(f"⚠️ Archive: {archive_lines} videos already downloaded")
-        else:
-            issues.append("✅ Archive: Clean")
-        
-        # 7. Log dosyasından son hataları kontrol et
-        try:
-            if os.path.exists("app_log.txt"):
-                with open("app_log.txt", 'r', encoding='utf-8') as f:
-                    lines = f.readlines()
-                    recent_errors = [line for line in lines[-50:] if "DETAILED_ERROR" in line]
-                    if recent_errors:
-                        issues.append(f"❌ Recent errors: {len(recent_errors)} found in log")
-                        # Son hatayı göster
-                        last_error = recent_errors[-1].strip()
-                        issues.append(f"   Last error: {last_error[-100:]}")
-                    else:
-                        issues.append("✅ No recent errors in log")
-            else:
-                issues.append("⚠️ No log file found")
-        except Exception as e:
-            issues.append(f"❌ Log check failed: {e}")
-        
-        # Sonuçları göster
-        info_text.value = "\n".join(issues)
-        info_text.color = "blue"
-        page.update()
-        log_event("user_action: download_issues_checked")
-    
-
-    
-    # Altyazı checkbox'larının durumuna göre dropdown'ları aktif/pasif yapma
+    # Subtitle checkbox events for enabling/disabling dropdowns
     def on_subtitle_change(e):
-        subtitle_language_dropdown.disabled = not subtitle_checkbox.value
+        components["subtitle_language_dropdown"].disabled = not components["subtitle_checkbox"].value
         # Embed subtitles sadece altyazı indirme aktifken kullanılabilir
-        if not subtitle_checkbox.value and not auto_subtitle_checkbox.value:
-            embed_subtitles_checkbox.disabled = True
+        if not components["subtitle_checkbox"].value and not components["auto_subtitle_checkbox"].value:
+            components["embed_subtitles_checkbox"].disabled = True
         else:
-            embed_subtitles_checkbox.disabled = False
+            components["embed_subtitles_checkbox"].disabled = False
         page.update()
     
     def on_auto_subtitle_change(e):
-        auto_translate_language_dropdown.disabled = not auto_subtitle_checkbox.value
+        components["auto_translate_language_dropdown"].disabled = not components["auto_subtitle_checkbox"].value
         # Embed subtitles sadece altyazı indirme aktifken kullanılabilir
-        if not subtitle_checkbox.value and not auto_subtitle_checkbox.value:
-            embed_subtitles_checkbox.disabled = True
+        if not components["subtitle_checkbox"].value and not components["auto_subtitle_checkbox"].value:
+            components["embed_subtitles_checkbox"].disabled = True
         else:
-            embed_subtitles_checkbox.disabled = False
+            components["embed_subtitles_checkbox"].disabled = False
         page.update()
     
-    subtitle_checkbox.on_change = on_subtitle_change
-    auto_subtitle_checkbox.on_change = on_auto_subtitle_change
+    components["subtitle_checkbox"].on_change = on_subtitle_change
+    components["auto_subtitle_checkbox"].on_change = on_auto_subtitle_change
     
     # Başlangıçta durumları ayarla
-    subtitle_language_dropdown.disabled = not subtitle_checkbox.value
-    auto_translate_language_dropdown.disabled = not auto_subtitle_checkbox.value
-    embed_subtitles_checkbox.disabled = not (subtitle_checkbox.value or auto_subtitle_checkbox.value)
+    components["subtitle_language_dropdown"].disabled = not components["subtitle_checkbox"].value
+    components["auto_translate_language_dropdown"].disabled = not components["auto_subtitle_checkbox"].value
+    components["embed_subtitles_checkbox"].disabled = not (components["subtitle_checkbox"].value or components["auto_subtitle_checkbox"].value)
 
     # --- Download Progress Table ---
-    download_progress_rows: Dict[str, dict] = {}
-    def build_download_progress_table():
-        return ft.DataTable(
-            columns=[
-                ft.DataColumn(ft.Text("Title", size=12)),
-                ft.DataColumn(ft.Text("Ext", size=12)),
-                ft.DataColumn(ft.Text("Size", size=12)),
-                ft.DataColumn(ft.Text("Percent", size=12)),
-                ft.DataColumn(ft.Text("ETA", size=12)),
-                ft.DataColumn(ft.Text("Speed", size=12)),
-                ft.DataColumn(ft.Text("Status", size=12)),
-            ],
-            rows=[
-                ft.DataRow(
-                    cells=[
-                        ft.DataCell(ft.Text(row["title"], size=11, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS)),
-                        ft.DataCell(ft.Text(row["ext"], size=11)),
-                        ft.DataCell(ft.Text(row["size"], size=11)),
-                        ft.DataCell(ft.Text(row["percent"], size=11)),
-                        ft.DataCell(ft.Text(row["eta"], size=11)),
-                        ft.DataCell(ft.Text(row["speed"], size=11)),
-                        ft.DataCell(ft.Text(row["status"], size=11)),
-                    ]
-                ) for row in download_progress_rows.values()
-            ],
-            heading_row_color="#23272F",
-            data_row_color={"hovered": "#23272F"},
-            border=ft.border.all(1, "#333"),
-            border_radius=6,
-            vertical_lines=ft.border.BorderSide(0, "transparent"),
-            horizontal_lines=ft.border.BorderSide(0, "#23272F"),
-            column_spacing=8,
-            heading_row_height=28,
-            width=820,
-        )
-    download_progress_container = ft.Container(
-        content=build_download_progress_table(),
-        height=180,
-        expand=False,
-    )
+    # This section is no longer needed as progress is displayed in the ListView
+    # def build_download_progress_table():
+    #     return ft.DataTable(
+    #         columns=[
+    #             ft.DataColumn(ft.Text("Title", size=12)),
+    #             ft.DataColumn(ft.Text("Ext", size=12)),
+    #             ft.DataColumn(ft.Text("Size", size=12)),
+    #             ft.DataColumn(ft.Text("Percent", size=12)),
+    #             ft.DataColumn(ft.Text("ETA", size=12)),
+    #             ft.DataColumn(ft.Text("Speed", size=12)),
+    #             ft.DataColumn(ft.Text("Status", size=12)),
+    #         ],
+    #         rows=[
+    #             ft.DataRow(
+    #                 cells=[
+    #                     ft.DataCell(ft.Text(row["title"], size=11, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS)),
+    #                     ft.DataCell(ft.Text(row["ext"], size=11)),
+    #                     ft.DataCell(ft.Text(row["size"], size=11)),
+    #                     ft.DataCell(ft.Text(row["percent"], size=11)),
+    #                     ft.DataCell(ft.Text(row["eta"], size=11)),
+    #                     ft.DataCell(ft.Text(row["speed"], size=11)),
+    #                     ft.DataCell(ft.Text(row["status"], size=11)),
+    #                 ]
+    #             ) for row in download_progress_rows.values()
+    #         ],
+    #         heading_row_color="#23272F",
+    #         data_row_color={"hovered": "#23272F"},
+    #         border=ft.border.all(1, "#333"),
+    #         border_radius=6,
+    #         vertical_lines=ft.border.BorderSide(0, "transparent"),
+    #         horizontal_lines=ft.border.BorderSide(0, "#23272F"),
+    #         column_spacing=8,
+    #         heading_row_height=28,
+    #         width=820,
+    #     )
+    # components["download_progress_container"] = ft.Container(
+    #     content=build_download_progress_table(),
+    #     height=180,
+    #     expand=False,
+    # )
     
     # Progress tablosunu kaldır, basit progress display kullan
-    progress_display = ft.ListView([
-        ft.Text("No downloads yet. Progress will appear here when you start downloading.", 
-                size=12, 
-                color="#666", 
-                italic=True)
-    ], spacing=5, expand=True, auto_scroll=True)
+    # components["progress_display"] = ft.ListView([
+    #     ft.Text("No downloads yet. Progress will appear here when you start downloading.", 
+    #             size=12, 
+    #             color="#666", 
+    #             italic=True)
+    # ], spacing=5, expand=True, auto_scroll=True)
     
     # --- Global video URL listesi ---
-    validated_video_urls = []
-    video_cards_dict = {}  # Video kartlarını takip etmek için
+    # This section is no longer needed as video list is managed by the downloader
+    # validated_video_urls = []
+    # video_cards_dict = {}  # Video kartlarını takip etmek için
 
     def reset_application():
         """Uygulamayı yeni indirme için sıfırlar"""
         global download_counter
         
         # URL input'u temizle
-        url_input.value = ""
+        components["url_input"].value = ""
         
         # Info text'i sıfırla
-        info_text.value = "Application reset. Ready for new download."
-        info_text.color = "green"
+        components["info_text"].value = "Application reset. Ready for new download."
+        components["info_text"].color = "green"
         
         # Progress bar'ı gizle
-        progress_bar.visible = False
-        progress_bar.value = 0
+        components["progress_bar"].visible = False
+        components["progress_bar"].value = 0
         
         # Video listesini temizle
-        video_list.controls.clear()
+        components["video_list"].controls.clear()
         
         # Progress display'i temizle
-        progress_display.controls.clear()
-        progress_display.controls.append(
+        components["progress_display"].controls.clear()
+        components["progress_display"].controls.append(
             ft.Text("No downloads yet. Progress will appear here when you start downloading.", 
                     size=12, 
                     color="#666", 
@@ -399,13 +472,13 @@ def create_app_ui(page: ft.Page):
         )
         
         # Local değişkenleri sıfırla
-        validated_video_urls.clear()
-        video_cards_dict.clear()
+        components["validated_video_urls"].clear()
+        components["video_cards_dict"].clear()
         download_counter = 0
         
         # Butonları aktif et
-        validate_button.disabled = False
-        download_button.disabled = True
+        components["validate_button"].disabled = False
+        components["download_button"].disabled = True
         
         # Progress event queue'yu temizle
         while not progress_event_queue.empty():
@@ -419,64 +492,64 @@ def create_app_ui(page: ft.Page):
 
     # --- Event Fonksiyonları ---
     def validate_url_click(e):
-        url = url_input.value
+        url = components["url_input"].value
         if not url:
-            info_text.value = "Please enter a URL."
-            info_text.color = "red"
+            components["info_text"].value = "Please enter a URL."
+            components["info_text"].color = "red"
             page.update()
             log_event(f"user_action: validate_url_clicked, url={url}")
             return
-        info_text.value = "Validating URL, please wait..."
-        info_text.color = None
-        progress_bar.visible = True
-        video_list.controls.clear()
-        validate_button.disabled = True
-        download_button.disabled = True
+        components["info_text"].value = "Validating URL, please wait..."
+        components["info_text"].color = None
+        components["progress_bar"].visible = True
+        components["video_list"].controls.clear()
+        components["validate_button"].disabled = True
+        components["download_button"].disabled = True
         page.update()
         log_event(f"user_action: validate_url_clicked, url={url}")
         threading.Thread(target=validate_url_thread, args=(url,)).start()
 
     def validate_url_thread(url):
         videos, error = downloader.get_video_info(url)
-        page.run_thread(update_ui_after_validation, videos, error)
+        page.run_thread(lambda: update_ui_after_validation(videos, error))
 
     def update_ui_after_validation(videos, error):
-        progress_bar.visible = False
-        validate_button.disabled = False
-        validated_video_urls.clear()
-        video_cards_dict.clear()  # Video kartları sözlüğünü temizle
+        components["progress_bar"].visible = False
+        components["validate_button"].disabled = False
+        components["validated_video_urls"].clear()
+        components["video_cards_dict"].clear()  # Video kartları sözlüğünü temizle
         if error:
             if "fragment 1 not found" in error or "unable to continue" in error:
-                info_text.value = (
+                components["info_text"].value = (
                     "Error: Video format not available or fragments missing. "
                     "Try a lower quality (e.g., 'Best Available') or different format."
                 )
-                info_text.color = "red"
+                components["info_text"].color = "red"
                 page.update()
                 log_event(f"download_error: validation_failed, error={error}")
                 return
-            info_text.value = f"Error: {error.strip().splitlines()[-1]}"
-            info_text.color = "red"
+            components["info_text"].value = f"Error: {error.strip().splitlines()[-1]}"
+            components["info_text"].color = "red"
             page.update()
             log_event(f"download_error: validation_failed, error={error}")
             return
         if not videos:
-            info_text.value = "No videos found at this URL."
+            components["info_text"].value = "No videos found at this URL."
             page.update()
-            log_event(f"download_info: no_videos_found, url={url_input.value}")
+            log_event(f"download_info: no_videos_found, url={components['url_input'].value}")
             return
-        info_text.value = f"Found {len(videos)} videos. Ready to download."
-        download_button.disabled = False
-        video_list.controls.clear()
+        components["info_text"].value = f"Found {len(videos)} videos. Ready to download."
+        components["download_button"].disabled = False
+        components["video_list"].controls.clear()
         for video in videos:
             # Her video için URL'yi topla
             video_url = None
             if 'webpage_url' in video:
                 video_url = video['webpage_url']
-                validated_video_urls.append(video_url)
+                components["validated_video_urls"].append(video_url)
             elif 'url' in video:
                 video_url = video['url']
-                validated_video_urls.append(video_url)
+                components["validated_video_urls"].append(video_url)
             thumbnail_url = video.get('thumbnail')
             title = video.get('title', 'No Title')
             duration = video.get('duration', 0)
@@ -564,24 +637,24 @@ def create_app_ui(page: ft.Page):
                 ),
                 margin=ft.margin.only(bottom=4)
             )
-            video_list.controls.append(video_card)
-            video_cards_dict[video_url] = video_card # Kartı sözlüğe ekle
+            components["video_list"].controls.append(video_card)
+            components["video_cards_dict"][video_url] = video_card # Kartı sözlüğe ekle
         
         page.update()
-        log_event(f"download_info: validation_successful, url={url_input.value}, num_videos={len(videos)}")
+        log_event(f"download_info: validation_successful, url={components['url_input'].value}, num_videos={len(videos)}")
 
     def start_download_click(e):
-        url = url_input.value
+        url = components["url_input"].value
         if not url:
-            info_text.value = "Please enter a URL to download."
-            info_text.color = "red"
+            components["info_text"].value = "Please enter a URL to download."
+            components["info_text"].color = "red"
             page.update()
             log_event(f"user_action: start_download_clicked, url={url}")
             return
-        download_path = download_path_text.value
+        download_path = components["download_path_text"].value
         if not download_path:
-            info_text.value = "Please select a download path."
-            info_text.color = "red"
+            components["info_text"].value = "Please select a download path."
+            components["info_text"].color = "red"
             page.update()
             log_event(f"user_action: start_download_clicked, url={url}, download_path={download_path}")
             return
@@ -592,30 +665,30 @@ def create_app_ui(page: ft.Page):
             with open(archive_path, 'r', encoding='utf-8') as f:
                 archive_content = f.read()
                 if archive_content.strip():
-                    info_text.value = "⚠️ Archive file exists! Some videos might be skipped. Use 'Clear Archive' if needed."
-                    info_text.color = "orange"
+                    components["info_text"].value = "⚠️ Archive file exists! Some videos might be skipped. Use 'Clear Archive' if needed."
+                    components["info_text"].color = "orange"
                     page.update()
                     log_event("download_warning: archive_file_exists")
         
-        info_text.value = "Starting download..."
-        info_text.color = "blue"
-        download_button.disabled = True
-        validate_button.disabled = True
-        progress_bar.visible = True
+        components["info_text"].value = "Starting download..."
+        components["info_text"].color = "blue"
+        components["download_button"].disabled = True
+        components["validate_button"].disabled = True
+        components["progress_bar"].visible = True
         
         # Progress display'i temizle ve başlangıç mesajı ekle
-        progress_display.controls.clear()
-        progress_display.controls.append(
+        components["progress_display"].controls.clear()
+        components["progress_display"].controls.append(
             ft.Text("Preparing downloads...", size=12, color="#4FC3F7", italic=True)
         )
         
         # Her video için ayrı thread başlat - ThreadPoolExecutor ile kontrollü
-        urls_to_download = validated_video_urls if validated_video_urls else [url]
+        urls_to_download = components["validated_video_urls"] if components["validated_video_urls"] else [url]
         
         # İndirme bilgisi ekle
         total_videos = len(urls_to_download)
-        max_concurrent = int(concurrent_videos_slider.value)
-        progress_display.controls.append(
+        max_concurrent = int(components["concurrent_videos_slider"].value)
+        components["progress_display"].controls.append(
             ft.Text(f"📊 Total videos: {total_videos} | Max concurrent: {max_concurrent}", 
                    size=11, color="#FFA726", italic=True)
         )
@@ -624,17 +697,17 @@ def create_app_ui(page: ft.Page):
         log_event(f"user_action: start_download_clicked, url={url}, download_path={download_path}")
         download_options = {
             "quality": "bestvideo+bestaudio/best",
-            "merge_video_audio": merge_video_audio_checkbox.value,
-            "download_subtitles": subtitle_checkbox.value,
-            "subtitle_language": subtitle_language_dropdown.value,
-            "auto_subtitles": auto_subtitle_checkbox.value,
-            "auto_translate_language": auto_translate_language_dropdown.value,
-            "embed_subtitles": embed_subtitles_checkbox.value,
-            "concurrent_fragments": int(concurrent_downloads_slider.value),
+            "merge_video_audio": components["merge_video_audio_checkbox"].value,
+            "download_subtitles": components["subtitle_checkbox"].value,
+            "subtitle_language": components["subtitle_language_dropdown"].value,
+            "auto_subtitles": components["auto_subtitle_checkbox"].value,
+            "auto_translate_language": components["auto_translate_language_dropdown"].value,
+            "embed_subtitles": components["embed_subtitles_checkbox"].value,
+            "concurrent_fragments": int(components["concurrent_downloads_slider"].value),
         }
         
         # Aynı anda indirme sayısını al
-        max_concurrent_videos = int(concurrent_videos_slider.value)
+        max_concurrent_videos = int(components["concurrent_videos_slider"].value)
         
         def start_concurrent_downloads():
             with ThreadPoolExecutor(max_workers=max_concurrent_videos) as executor:
@@ -700,240 +773,357 @@ def create_app_ui(page: ft.Page):
     # polling fonksiyonunu thread olarak başlat
     threading.Thread(target=poll_progress_events, daemon=True).start()
 
-    def update_video_card_status(video_url, status):
-        """Video kartının durumunu günceller (yeşil = tamamlandı, kırmızı = hata)"""
-        print(f"[DEBUG] Updating video card status: {video_url} -> {status}")
-        log_event(f"card_update: url={video_url}, status={status}")
-        
-        if video_url in video_cards_dict:
-            card = video_cards_dict[video_url]
-            # Card içindeki Container'ı bul ve rengini değiştir
-            container = card.content
-            if status == "completed":
-                container.bgcolor = "#1B4332"  # Koyu yeşil
-                container.border = ft.border.all(2, "#40916C")  # Yeşil border
-                print(f"[DEBUG] Card colored GREEN for: {video_url}")
-            elif status == "error":
-                container.bgcolor = "#4A1A1A"  # Koyu kırmızı
-                container.border = ft.border.all(2, "#DC2626")  # Kırmızı border
-                print(f"[DEBUG] Card colored RED for: {video_url}")
-            
-            try:
-                page.update()
-            except Exception as e:
-                print(f"[ERROR] Card update error: {e}")
-        else:
-            print(f"[DEBUG] Video URL not found in cards dict: {video_url}")
-            print(f"[DEBUG] Available URLs in dict: {list(video_cards_dict.keys())}")
+    # Note: update_video_card_status is now defined outside this function
 
-    def update_ui_during_download(update):
-        print("[DEBUG] Progress event:", update)  # DEBUG
-        event_type = update.get("type", "unknown")
-        thread_id = update.get("thread_id", "unknown")
-        video_url = update.get("video_url", "unknown")
-        
-        print(f"[DEBUG] Processing event: type={event_type}, thread={thread_id}, url={video_url}")
-        
-        # Basit progress display ile göster
-        if update["type"] == "progress":
-            # Gerçek değerlerle progress satırı oluştur
-            title = update.get('title', 'Unknown')
-            percent = update.get('percent', 0)
-            speed = update.get('speed', 'Unknown')
-            eta = update.get('eta', 'Unknown')
-            total_size = update.get('total_size', 'Unknown')
-            ext = update.get('ext', 'Unknown')
-            
-            print(f"[DEBUG] Progress: {title} - {percent}% - {speed}")
-            
-            progress_text_line = ft.Text(
-                f"📥 {title} ({ext}) - {percent:.1f}% of {total_size} at {speed} | ETA: {eta}",
-                size=12,
-                color="#4FC3F7"
-            )
-            
-            # Thread ID'ye göre güncelle veya yeni ekle
-            thread_id = update.get('thread_id', 'unknown')
-            found = False
-            for i, control in enumerate(progress_display.controls):
-                if hasattr(control, 'data') and control.data == thread_id:
-                    progress_display.controls[i] = progress_text_line
-                    progress_text_line.data = thread_id
-                    found = True
-                    break
-            
-            if not found:
-                progress_text_line.data = thread_id
-                progress_display.controls.append(progress_text_line)
-            
-            # Ana progress bar'ı da güncelle
-            progress_bar.value = percent / 100
-            info_text.value = f"Downloading: {title} - {percent:.1f}% of {total_size} at {speed}"
-            info_text.color = None
-            
-        elif update["type"] == "complete":
-            print(f"[DEBUG] COMPLETE event received for: {video_url}")
-            # Tamamlanan indirmeyi güncelle
-            thread_id = update.get('thread_id', 'unknown')
-            title = update.get('title', 'Unknown')
-            video_url = update.get('video_url')
-            
-            print(f"[DEBUG] Marking as completed: title={title}, url={video_url}")
-            
-            completed_text = ft.Text(
-                f"✅ {title} - Download completed successfully!",
-                size=12,
-                color="#43A047"
-            )
-            
-            for i, control in enumerate(progress_display.controls):
-                if hasattr(control, 'data') and control.data == thread_id:
-                    progress_display.controls[i] = completed_text
-                    completed_text.data = thread_id
-                    break
-            
-            # Video kartını yeşile boya
-            if video_url:
-                print(f"[DEBUG] About to update card status for: {video_url}")
-                update_video_card_status(video_url, "completed")
-            else:
-                print("[DEBUG] No video_url in complete event!")
-            
-            # Tüm indirmeler tamamlandı mı kontrol et
-            all_completed = all(
-                "✅" in control.value or "❌" in control.value 
-                for control in progress_display.controls 
-                if hasattr(control, 'value')
-            )
-            
-            if all_completed:
-                info_text.value = "All downloads completed! Videos have been saved to the selected folder. Use 'New Download' for next download."
-                info_text.color = "green"
-                download_button.disabled = False
-                validate_button.disabled = False
-                progress_bar.visible = False
-            
-        elif update["type"] == "error":
-            print(f"[DEBUG] ERROR event received for: {video_url}")
-            # Hatalı indirmeyi güncelle
-            thread_id = update.get('thread_id', 'unknown')
-            title = update.get('title', 'Unknown')
-            video_url = update.get('video_url')
-            error_message = update.get('message', 'Unknown error')
-            
-            # Detaylı hata mesajını göster
-            error_text = ft.Text(
-                f"❌ {title} - Error: {error_message[:100]}...",
-                size=12,
-                color="#F44336"
-            )
-            
-            for i, control in enumerate(progress_display.controls):
-                if hasattr(control, 'data') and control.data == thread_id:
-                    progress_display.controls[i] = error_text
-                    error_text.data = thread_id
-                    break
-            
-            # Video kartını kırmızıya boya
-            if video_url:
-                update_video_card_status(video_url, "error")
-            
-            # Ana info text'e de detaylı hata göster
-            info_text.value = f"Download Error: {error_message}"
-            info_text.color = "red"
-            
-            # Log dosyasına detaylı hata kaydet
-            log_event(f"DETAILED_ERROR: thread={thread_id}, url={video_url}, error={error_message}")
-        
-        elif update["type"] == "status":
-            print(f"[DEBUG] STATUS event: {update.get('message', '')}")
-        
-        elif update["type"] == "log":
-            # FFmpeg mesajları için özel işlem
-            message = update.get("message", "")
-            if "FFmpeg is being downloaded" in message:
-                info_text.value = "FFmpeg is being downloaded, please wait..."
-                info_text.color = "blue"
-            elif "FFmpeg" in message and "successfully" in message:
-                info_text.value = "FFmpeg installation successful!"
-                info_text.color = "green"
-        
-        # UI'yı güncelle
+    # Note: update_ui_during_download is now defined outside this function
+
+    # Button event handlers
+    components["validate_button"].on_click = validate_url_click
+    components["download_button"].on_click = start_download_click
+    components["reset_button"].on_click = lambda _: reset_application()
+    components["clear_archive_button"].on_click = lambda _: clear_download_archive()
+    components["check_issues_button"].on_click = lambda _: check_download_issues()
+    
+    # Additional utility functions
+    def clear_download_archive():
+        """Clear download archive file"""
         try:
+            archive_path = downloader.archive_path
+            if os.path.exists(archive_path):
+                os.remove(archive_path)
+                components["info_text"].value = "Download archive cleared! Previously downloaded videos will be downloaded again."
+                components["info_text"].color = "green"
+                log_event("user_action: download_archive_cleared")
+            else:
+                components["info_text"].value = "No archive file found."
+                components["info_text"].color = "orange"
+                log_event("user_action: no_archive_file_found")
             page.update()
         except Exception as e:
-            print(f"[ERROR] Page update error: {e}")
-
-    # Butonlara event fonksiyonlarını bağla
-    validate_button.on_click = validate_url_click
-    download_button.on_click = start_download_click
+            components["info_text"].value = f"Error clearing archive: {e}"
+            components["info_text"].color = "red"
+            log_event(f"user_action: archive_clear_error, error={e}")
+            page.update()
+    
+    def check_download_issues():
+        """Check for download issues and system status"""
+        from utils import check_yt_dlp, check_ffmpeg, get_disk_space
+        
+        issues = []
+        
+        # 1. Check yt-dlp version
+        try:
+            result = subprocess.run(["yt-dlp", "--version"], capture_output=True, text=True, timeout=10)
+            if result.returncode == 0:
+                version = result.stdout.strip()
+                issues.append(f"✅ yt-dlp version: {version}")
+            else:
+                issues.append("❌ yt-dlp not working properly")
+        except Exception as e:
+            issues.append(f"❌ yt-dlp error: {e}")
+        
+        # 2. Check internet connection
+        try:
+            result = subprocess.run(["ping", "youtube.com", "-n", "1"], capture_output=True, text=True, timeout=5)
+            if result.returncode == 0:
+                issues.append("✅ Internet connection: OK")
+            else:
+                issues.append("❌ Internet connection: Failed")
+        except Exception:
+            issues.append("❌ Internet connection: Cannot test")
+        
+        # 3. Check disk space
+        download_path = components["download_path_text"].value or "."
+        disk_info = get_disk_space(download_path)
+        if disk_info:
+            free_gb = disk_info["free"]
+            if free_gb > 1:
+                issues.append(f"✅ Disk space: {free_gb:.1f} GB available")
+            else:
+                issues.append(f"⚠️ Disk space: Only {free_gb:.1f} GB available")
+        else:
+            issues.append("❌ Disk space check failed")
+        
+        # 4. Check FFmpeg
+        if downloader.check_ffmpeg():
+            issues.append("✅ FFmpeg: Available")
+        else:
+            issues.append("❌ FFmpeg: Not available (video merging may fail)")
+        
+        # 5. Check cookies
+        if downloader.cookies_file and os.path.exists(downloader.cookies_file):
+            issues.append("✅ Cookies: Available")
+        else:
+            issues.append("⚠️ Cookies: Not set (member-only videos may fail)")
+        
+        # 6. Check archive file
+        if os.path.exists(downloader.archive_path):
+            with open(downloader.archive_path, 'r', encoding='utf-8') as f:
+                archive_lines = len(f.readlines())
+            issues.append(f"⚠️ Archive: {archive_lines} videos already downloaded")
+        else:
+            issues.append("✅ Archive: Clean")
+        
+        # 7. Check log file for recent errors
+        try:
+            if os.path.exists("app_log.txt"):
+                with open("app_log.txt", 'r', encoding='utf-8') as f:
+                    lines = f.readlines()
+                    recent_errors = [line for line in lines[-50:] if "DETAILED_ERROR" in line]
+                    if recent_errors:
+                        issues.append(f"❌ Recent errors: {len(recent_errors)} found in log")
+                        last_error = recent_errors[-1].strip()
+                        issues.append(f"   Last error: {last_error[-100:]}")
+                    else:
+                        issues.append("✅ No recent errors in log")
+            else:
+                issues.append("⚠️ No log file found")
+        except Exception as e:
+            issues.append(f"❌ Log check failed: {e}")
+        
+        # Display results
+        components["info_text"].value = "\n".join(issues)
+        components["info_text"].color = "blue"
+        page.update()
+        log_event("user_action: download_issues_checked")
 
     # --- Layout ---
-    settings_column = ft.Column([
-        ft.Text("Download Settings", size=16, weight=ft.FontWeight.BOLD),
-        merge_video_audio_checkbox,
-        merge_info,
-        subtitle_checkbox,
-        ft.Row([subtitle_language_dropdown], alignment=ft.MainAxisAlignment.START),
-        auto_subtitle_checkbox,
-        ft.Row([auto_translate_language_dropdown], alignment=ft.MainAxisAlignment.START),
-        embed_subtitles_checkbox,
-        ft.Row([download_path_text, select_path_button]),
-        ft.Text("Authentication (for member-only videos)", size=14, weight=ft.FontWeight.BOLD),
-        ft.Row([cookies_path_text, select_cookies_button]),
-        ft.Row([extract_cookies_button], alignment=ft.MainAxisAlignment.CENTER),
-        ft.Text("Concurrent Fragments"),
-        concurrent_downloads_slider,
-        ft.Text("Concurrent Videos"),
-        concurrent_videos_slider,
-    ])
+    # settings_column = ft.Column([
+    #     ft.Text("Download Settings", size=16, weight=ft.FontWeight.BOLD),
+    #     merge_video_audio_checkbox,
+    #     merge_info,
+    #     subtitle_checkbox,
+    #     ft.Row([subtitle_language_dropdown], alignment=ft.MainAxisAlignment.START),
+    #     auto_subtitle_checkbox,
+    #     ft.Row([auto_translate_language_dropdown], alignment=ft.MainAxisAlignment.START),
+    #     embed_subtitles_checkbox,
+    #     ft.Row([download_path_text, select_path_button]),
+    #     ft.Text("Authentication (for member-only videos)", size=14, weight=ft.FontWeight.BOLD),
+    #     ft.Row([cookies_path_text, select_cookies_button]),
+    #     ft.Row([extract_cookies_button], alignment=ft.MainAxisAlignment.CENTER),
+    #     ft.Text("Concurrent Fragments"),
+    #     concurrent_downloads_slider,
+    #     ft.Text("Concurrent Videos"),
+    #     concurrent_videos_slider,
+    # ])
 
-    main_column = ft.Column(
-        [
-            ft.Text("1. Select Download Type", size=16, weight=ft.FontWeight.BOLD),
-            download_type,
-            ft.Text("2. Enter URL and Validate", size=16, weight=ft.FontWeight.BOLD),
-            ft.Row([url_input, validate_button]),
-            info_text,
-            progress_bar,
-            ft.Row([reset_button, clear_archive_button, check_issues_button], alignment=ft.MainAxisAlignment.CENTER),
-        ],
-        spacing=15
-    )
+    # main_column = ft.Column(
+    #     [
+    #         ft.Text("1. Select Download Type", size=16, weight=ft.FontWeight.BOLD),
+    #         download_type,
+    #         ft.Text("2. Enter URL and Validate", size=16, weight=ft.FontWeight.BOLD),
+    #         ft.Row([url_input, validate_button]),
+    #         info_text,
+    #         progress_bar,
+    #         ft.Row([reset_button, clear_archive_button, check_issues_button], alignment=ft.MainAxisAlignment.CENTER),
+    #     ],
+    #     spacing=15
+    # )
 
-    videos_column = ft.Column([
-        ft.Text("3. Found Videos", size=16, weight=ft.FontWeight.BOLD),
-        ft.Container(
-            content=video_list,
-            border=ft.border.all(1, "gray"),
-            border_radius=5,
-            padding=10,
-            expand=True,
-        ),
-        ft.Container(
-            content=ft.Text("Download Progress", size=15, weight=ft.FontWeight.BOLD),
-            margin=ft.margin.only(top=10)
-        ),
-        ft.Container(
-            content=progress_display,
-            height=200,
-            expand=True,
-            border=ft.border.all(1, "#333"),
-            border_radius=6,
-            padding=10,
-            bgcolor="#1A1A1A",
-        ),
-    ], expand=True)
+    # videos_column = ft.Column([
+    #     ft.Text("3. Found Videos", size=16, weight=ft.FontWeight.BOLD),
+    #     ft.Container(
+    #         content=video_list,
+    #         border=ft.border.all(1, "gray"),
+    #         border_radius=5,
+    #         padding=10,
+    #         expand=True,
+    #     ),
+    #     ft.Container(
+    #         content=ft.Text("Download Progress", size=15, weight=ft.FontWeight.BOLD),
+    #         margin=ft.margin.only(top=10)
+    #     ),
+    #     ft.Container(
+    #         content=progress_display,
+    #         height=200,
+    #         expand=True,
+    #         border=ft.border.all(1, "#333"),
+    #         border_radius=6,
+    #         padding=10,
+    #         bgcolor="#1A1A1A",
+    #     ),
+    # ], expand=True)
 
-    return ft.Row(
-        [
-            ft.Column([main_column, settings_column, download_button], expand=1, spacing=20),
-            ft.VerticalDivider(),
-            ft.Column([videos_column], expand=2),
-        ],
-        expand=True,
-        spacing=20,
-    )
+def _start_progress_monitoring(components: Dict[str, ft.Control], page: ft.Page) -> None:
+    """Start progress monitoring thread for download updates"""
+    def poll_progress_events():
+        while True:
+            try:
+                update = progress_event_queue.get(timeout=0.1)
+                # Use page.run_thread_safe for UI updates from background thread
+                page.run_thread(lambda: update_ui_during_download(update, components, page))
+            except queue.Empty:
+                continue
+            except Exception as e:
+                print(f"[ERROR] Progress polling error: {e}")
+                continue
+    
+    # Start polling thread
+    threading.Thread(target=poll_progress_events, daemon=True).start()
+
+def update_ui_during_download(update: Dict[str, any], components: Dict[str, ft.Control], page: ft.Page) -> None:
+    """Update UI during download process"""
+    print("[DEBUG] Progress event:", update)
+    event_type = update.get("type", "unknown")
+    thread_id = update.get("thread_id", "unknown")
+    video_url = update.get("video_url", "unknown")
+    
+    print(f"[DEBUG] Processing event: type={event_type}, thread={thread_id}, url={video_url}")
+    
+    # Update progress display based on event type
+    if event_type == "progress":
+        # Handle progress updates
+        title = update.get('title', 'Unknown')
+        percent = update.get('percent', 0)
+        speed = update.get('speed', 'Unknown')
+        eta = update.get('eta', 'Unknown')
+        total_size = update.get('total_size', 'Unknown')
+        ext = update.get('ext', 'Unknown')
+        
+        print(f"[DEBUG] Progress: {title} - {percent}% - {speed}")
+        
+        progress_text_line = ft.Text(
+            f"📥 {title} ({ext}) - {percent:.1f}% of {total_size} at {speed} | ETA: {eta}",
+            size=12,
+            color=UI_CONFIG["colors"]["primary"]
+        )
+        
+        # Update or add progress line
+        thread_id = update.get('thread_id', 'unknown')
+        found = False
+        for i, control in enumerate(components["progress_display"].controls):
+            if hasattr(control, 'data') and control.data == thread_id:
+                components["progress_display"].controls[i] = progress_text_line
+                progress_text_line.data = thread_id
+                found = True
+                break
+        
+        if not found:
+            progress_text_line.data = thread_id
+            components["progress_display"].controls.append(progress_text_line)
+        
+        # Update main progress bar
+        components["progress_bar"].value = percent / 100
+        components["info_text"].value = f"Downloading: {title} - {percent:.1f}% of {total_size} at {speed}"
+        components["info_text"].color = None
+        
+    elif event_type == "complete":
+        print(f"[DEBUG] COMPLETE event received for: {video_url}")
+        
+        thread_id = update.get('thread_id', 'unknown')
+        title = update.get('title', 'Unknown')
+        video_url = update.get('video_url')
+        
+        print(f"[DEBUG] Marking as completed: title={title}, url={video_url}")
+        
+        completed_text = ft.Text(
+            f"✅ {title} - Download completed successfully!",
+            size=12,
+            color=UI_CONFIG["colors"]["success"]
+        )
+        
+        for i, control in enumerate(components["progress_display"].controls):
+            if hasattr(control, 'data') and control.data == thread_id:
+                components["progress_display"].controls[i] = completed_text
+                completed_text.data = thread_id
+                break
+        
+        # Update video card status
+        if video_url:
+            print(f"[DEBUG] About to update card status for: {video_url}")
+            update_video_card_status(video_url, "completed", components)
+        
+        # Check if all downloads are complete
+        all_completed = all(
+            "✅" in control.value or "❌" in control.value 
+            for control in components["progress_display"].controls 
+            if hasattr(control, 'value')
+        )
+        
+        if all_completed:
+            components["info_text"].value = "All downloads completed! Videos have been saved to the selected folder. Use 'New Download' for next download."
+            components["info_text"].color = UI_CONFIG["colors"]["success"]
+            components["download_button"].disabled = False
+            components["validate_button"].disabled = False
+            components["progress_bar"].visible = False
+            
+    elif event_type == "error":
+        print(f"[DEBUG] ERROR event received for: {video_url}")
+        
+        thread_id = update.get('thread_id', 'unknown')
+        title = update.get('title', 'Unknown')
+        video_url = update.get('video_url')
+        error_message = update.get('message', 'Unknown error')
+        
+        # Show error in progress display
+        error_text = ft.Text(
+            f"❌ {title} - Error: {error_message[:100]}...",
+            size=12,
+            color=UI_CONFIG["colors"]["error"]
+        )
+        
+        for i, control in enumerate(components["progress_display"].controls):
+            if hasattr(control, 'data') and control.data == thread_id:
+                components["progress_display"].controls[i] = error_text
+                error_text.data = thread_id
+                break
+        
+        # Update video card status
+        if video_url:
+            update_video_card_status(video_url, "error", components)
+        
+        # Show error in main info text
+        components["info_text"].value = f"Download Error: {error_message}"
+        components["info_text"].color = UI_CONFIG["colors"]["error"]
+        
+        # Log detailed error
+        log_event(f"DETAILED_ERROR: thread={thread_id}, url={video_url}, error={error_message}")
+    
+    elif event_type == "status":
+        print(f"[DEBUG] STATUS event: {update.get('message', '')}")
+    
+    elif event_type == "log":
+        # Handle FFmpeg messages
+        message = update.get("message", "")
+        if "FFmpeg is being downloaded" in message:
+            components["info_text"].value = "FFmpeg is being downloaded, please wait..."
+            components["info_text"].color = UI_CONFIG["colors"]["info"]
+        elif "FFmpeg" in message and "successfully" in message:
+            components["info_text"].value = "FFmpeg installation successful!"
+            components["info_text"].color = UI_CONFIG["colors"]["success"]
+    
+    # Update UI
+    try:
+        page.update()
+    except Exception as e:
+        print(f"[ERROR] Page update error: {e}")
+
+def update_video_card_status(video_url: str, status: str, components: Dict[str, ft.Control]) -> None:
+    """Update video card visual status"""
+    print(f"[DEBUG] Updating video card status: {video_url} -> {status}")
+    log_event(f"card_update: url={video_url}, status={status}")
+    
+    if video_url in components["video_cards_dict"]:
+        card = components["video_cards_dict"][video_url]
+        container = card.content
+        
+        if status == "completed":
+            container.bgcolor = "#1B4332"  # Dark green
+            container.border = ft.border.all(2, "#40916C")  # Green border
+            print(f"[DEBUG] Card colored GREEN for: {video_url}")
+        elif status == "error":
+            container.bgcolor = "#4A1A1A"  # Dark red
+            container.border = ft.border.all(2, "#DC2626")  # Red border
+            print(f"[DEBUG] Card colored RED for: {video_url}")
+        
+        try:
+            # Note: page.update() should be called by the caller
+            pass
+        except Exception as e:
+            print(f"[ERROR] Card update error: {e}")
+    else:
+        print(f"[DEBUG] Video URL not found in cards dict: {video_url}")
+        print(f"[DEBUG] Available URLs in dict: {list(components['video_cards_dict'].keys())}")
 
 def main(page: ft.Page):
     app_ui = create_app_ui(page)
