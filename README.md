@@ -1,262 +1,114 @@
-# YouTube Channel Downloader
+<div align="center">
 
-Screenshots live under `docs/` in release branches; if missing locally, run `python main.py` to see the UI.
+<img src="assets/icon.png" width="96" alt="App icon">
 
-This application is a desktop tool developed for downloading content from YouTube channels, playlists, and videos.
+# YouTube Downloader
 
-## 🚀 Quick Start
+**A fast, beautiful desktop app for downloading YouTube videos, Shorts, playlists, channels and music.**
+Powered by [yt-dlp](https://github.com/yt-dlp/yt-dlp) · Windows · macOS · Linux · Türkçe & English
 
-### Option 1: Use Pre-built Executable (Recommended)
-You can run the application directly without installing Python:
+[Download](https://github.com/MihrimatriX/ytdlp-gui/releases) · [Features](#features) · [Run from source](#run-from-source) · [Türkçe](#türkçe)
 
-1. Download the latest executable from the [Releases](https://github.com/your-username/ytdlp-gui/releases) page
-2. Or use the pre-built executable in the `dist` folder:
-   ```bash
-   # Windows
-   dist/YouTube-Downloader.exe
-   ```
-3. Double-click the executable to run the application
-4. No Python installation required!
+<img src="docs/screenshot-video.png" alt="Video download page" width="860">
 
-### Option 2: Run from Source
-If you want to run from source code:
+</div>
 
-1. Python 3.7+ must be installed
-2. Install the required packages:
-   ```bash
-   pip install -r requirements.txt
-   ```
-3. Install yt-dlp:
-   ```bash
-   pip install yt-dlp
-   ```
-4. Run the application:
-   ```bash
-   python main.py
-   ```
+## Features
 
-## 🎯 Features
+- **Paste anything** – video, Shorts, playlist, channel or YouTube Music link. Not a link? It searches YouTube for you.
+- **Pick exact quality** – every available resolution up to 8K with HDR/60 fps badges and the **estimated file size** before you download.
+- **Audio only** – MP3, M4A, Opus, FLAC or WAV with bitrate choice, cover art and tags embedded.
+- **Playlists & channels** – see every video with thumbnails, filter, select what you want and download it into its own folder (optionally numbered).
+- **Real download queue** – parallel downloads with live speed, ETA and size; **pause, resume, cancel and retry** each item; taskbar progress.
+- **History** – everything you downloaded, searchable, with "open", "show in folder" and "download again".
+- **Smart extras** – clipboard link detection, embedded chapters and subtitles, SponsorBlock (mark or cut sponsors), speed limit, proxy, "skip already downloaded" archive.
+- **Sign-in when needed** – use your browser's cookies (Chrome, Firefox, Edge, Brave, …) or a `cookies.txt` for age-restricted and members-only videos.
+- **Helpful errors** – clear explanations ("YouTube wants to verify you → enable browser cookies") instead of raw logs.
+- **Polished UI** – dark & light themes, six accent colours, responsive layout, keyboard shortcuts, Turkish and English.
+- **System page** – checks yt-dlp, FFmpeg, JavaScript runtime, connectivity and disk space; installs FFmpeg automatically on Windows and updates yt-dlp when running from source.
 
-- Download from YouTube channels, playlists, and videos
-- Cookies support for member-only videos
-- **Automatic cookie extraction** (from Edge, Chrome, and Firefox)
-- Video quality selection
-- Subtitle download option
-- Concurrent download settings
-- Modern and user-friendly interface
-- Real-time download progress
-- **Portable executable** - no installation required
+<table>
+  <tr>
+    <td><img src="docs/screenshot-home.png" alt="Home"></td>
+    <td><img src="docs/screenshot-playlist.png" alt="Playlist"></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshot-downloads.png" alt="Downloads"></td>
+    <td><img src="docs/screenshot-light.png" alt="Light theme"></td>
+  </tr>
+</table>
 
+## Install
 
-## 🚀 Usage
+Grab the latest build from the [Releases](https://github.com/MihrimatriX/ytdlp-gui/releases) page:
 
-1. **Using the executable (easiest)**:
-   - Double-click `dist/YouTube-Downloader.exe`
-   - Or run from command line: `dist/YouTube-Downloader.exe`
+| Platform | File | Notes |
+|---|---|---|
+| Windows | `YouTube-Downloader-Windows.zip` | Extract and run `YouTube-Downloader.exe`. FFmpeg is included. |
+| macOS | `YouTube-Downloader-macOS.zip` | Unzip and open the app. Install FFmpeg with `brew install ffmpeg`. |
+| Linux | `YouTube-Downloader-Linux.tar.gz` | `tar -xzf … && ./YouTube-Downloader-Linux`. Install FFmpeg with `sudo apt install ffmpeg`. |
 
-2. **Using Python source**:
-   ```bash
-   python main.py
-   ```
+> **Tip:** For the best YouTube compatibility also install [Deno](https://deno.com) or Node.js – yt-dlp uses a JavaScript runtime to unlock every format. The System page tells you if anything is missing.
 
-3. In the opened interface, select the download type (Channel, Playlist, Video)
-4. Enter the YouTube URL and click the "Validate" button
-5. Configure the download settings:
-   - Video quality
-   - Subtitle download
-   - Download folder
-   - Cookies file (for member-only videos)
-   - Number of concurrent downloads
-6. Click the "Start Download" button to begin downloading
-7. You can track the download progress in the interface
+## Run from source
 
-## 🍪 Using Cookies for Member-Only Videos
-
-To download member-only videos, you need to use your YouTube cookies file:
-
-### Method 1: Automatic Cookie Extraction (Recommended)
-
-Click the "Extract from Browser" button in the application to automatically extract cookies from your browser.
-
-### Method 2: Manual Cookie Extractor
-
-Run the cookie extractor from the command line:
+Requires Python 3.10+.
 
 ```bash
-# Automatic (tries Edge, then Chrome, then Firefox)
-python cookie_extractor.py
-
-# Only from Edge
-python cookie_extractor.py --browser edge
-
-# Only from Chrome
-python cookie_extractor.py --browser chrome
-
-# Only from Firefox
-python cookie_extractor.py --browser firefox
+pip install -r requirements.txt
+python main.py
 ```
 
-### Method 3: Browser Extension
-1. Install "Get cookies.txt" or "Cookie Quick Manager" extension for Chrome/Firefox
-2. Log in to YouTube
-3. Use the extension to download the cookies.txt file
-
-### Method 4: Manual Export
-1. Log in to YouTube from your browser
-2. Open Developer Tools (F12)
-3. Go to the Application/Storage tab
-4. Cookies > https://youtube.com
-5. Copy all cookies and save them in the following format:
-
-```
-# Netscape HTTP Cookie File
-.youtube.com	TRUE	/	FALSE	1735689600	VISITOR_INFO1_LIVE	...
-.youtube.com	TRUE	/	FALSE	1735689600	LOGIN_INFO	...
-```
-
-### Using the Cookies File:
-1. Click the "Select Cookies" button in the application
-2. Select the cookies.txt file you created
-3. You can now download member-only videos
-
-## ⚡ Cookie Extractor Features
-
-- **Automatic Browser Detection**: Automatically finds Edge, Chrome, and Firefox
-- **Multi-Platform Support**: Windows, macOS, and Linux
-- **Edge Profile Support**: Automatically detects different Edge profile folders
-- **Secure Decryption**: Uses Windows DPAPI for secure decryption
-- **Netscape Format**: Compatible with yt-dlp
-- **Error Handling**: Comprehensive error control and user-friendly messages
-- **Works While Browser is Open**: Can extract cookies even if Edge is open
-
-## 🔒 Security Notes
-
-- Keep your cookies file secure, do not share it with others
-- The cookies file grants access to your YouTube account
-- Update your cookies file regularly
-- The cookie extractor only extracts YouTube cookies
-
-## 🔧 Troubleshooting
-
-### "yt-dlp is not installed" Error
-```bash
-pip install yt-dlp
-```
-
-### Cookie Extractor Error
-```bash
-# Install required dependencies
-pip install pycryptodome pywin32 cryptography
-```
-
-### Edge Cookies Error
-- If cookies cannot be extracted while Edge is open, close Edge and try again
-- Or type 'y' when the script asks you to continue
-- Automatically detects different Edge profile folders
-
-### Member-only Video Error
-- Make sure the cookies file is in the correct format
-- Make sure your YouTube account is a member
-- Make sure the cookies file is up to date
-- Make sure you are logged in to YouTube in your browser
-
-### Download Errors
-- Check your internet connection
-- Make sure the URL is correct
-- Make sure you have enough disk space
-
-### Executable Issues
-- If the executable doesn't run, try running it as administrator
-- Make sure Windows Defender isn't blocking the file
-- Check that you have the latest Windows updates
-
-## 📦 Building Executable
-
-To create standalone executables for all platforms:
-
-### 🪟 Windows
-```bash
-# Method 1: Using build script (Recommended)
-build_exe.bat
-
-# Method 2: Manual build
-pip install pyinstaller
-python -c "from downloader import Downloader; d = Downloader(); d.setup_ffmpeg()"
-pyinstaller youtube_downloader.spec --clean --noconfirm
-```
-
-### 🐧 Linux
-```bash
-# Make script executable
-chmod +x build_linux.sh
-
-# Run build script
-./build_linux.sh
-
-# Manual build
-pip3 install pyinstaller
-python3 -c "from downloader import Downloader; d = Downloader(); d.setup_ffmpeg()"
-pyinstaller youtube_downloader_linux.spec --clean --noconfirm
-```
-
-### 🍎 macOS
-```bash
-# Make script executable
-chmod +x build_macos.sh
-
-# Run build script
-./build_macos.sh
-
-# Manual build
-pip3 install pyinstaller
-python3 -c "from downloader import Downloader; d = Downloader(); d.setup_ffmpeg()"
-pyinstaller youtube_downloader_macos.spec --clean --noconfirm
-```
-
-### 🚀 Automated Multi-Platform Release
-
-For maintainers to create releases for all platforms:
+Development helpers:
 
 ```bash
-# Prepare and create a new release
-python prepare_release.py --version patch
-
-# Options:
-# --version major|minor|patch (default: patch)
-# --dry-run (preview changes)
-# --skip-build (skip local build test)
-# --force (ignore uncommitted changes)
+pip install -r requirements-dev.txt
+python -m pytest            # unit + end-to-end download tests (needs ffmpeg)
+YTDLP_GUI_WEB=1 python main.py   # open the UI in a browser instead of a window
+python build.py             # build a standalone executable into ./dist
+python build.py --with-ffmpeg    # Windows: bundle FFmpeg too
 ```
 
-This will:
-1. Create a new version tag
-2. Push to GitHub
-3. Trigger GitHub Actions to build for Windows, Linux, and macOS
-4. Automatically create a GitHub release with all executables
+### Keyboard shortcuts
 
-### 📦 Executable Features
-- **Cross-Platform**: Windows (.exe), Linux (binary), macOS (.app + .dmg)
-- **Single File**: Everything bundled into one executable
-- **No Dependencies**: No need to install Python or any packages
-- **FFmpeg Included**: Video merging works out of the box
-- **Portable**: Can be run on any compatible machine
-- **Size**: Approximately 70-80MB per platform
-- **Ready to Use**: Pre-built executable available in `dist/` folder
+| Shortcut | Action |
+|---|---|
+| `Ctrl + L` | Focus the link / search box |
+| `Enter` | Fetch |
+| `Ctrl + 1 … 5` | Switch pages |
 
-### 📁 Distribution Files
-- **Windows**: `YouTube-Downloader.exe` (77MB) - Available in `dist/` folder
-- **Linux**: `YouTube-Downloader-Linux` (75MB)
-- **macOS**: `YouTube-Downloader-macOS.app` bundle or `.dmg` (80MB)
+## Project layout
 
-Each executable contains:
-- Python runtime
-- All required libraries (flet, yt-dlp, cryptography, etc.)
-- FFmpeg binary
-- Application code
+```
+main.py                 entry point
+ytgui/
+  engine.py             download queue on the yt-dlp Python API (pause/resume/cancel/retry)
+  media.py              metadata extraction, quality & size estimation
+  options.py            settings → yt-dlp options (via yt-dlp's own parser)
+  settings.py history.py i18n.py errors.py urls.py ffmpeg.py diagnostics.py
+  ui/                   Flet views: download, queue, history, settings, system
+tests/                  pytest suite (incl. real downloads from a local server)
+build.py                cross-platform packaging with `flet pack`
+```
 
-## 📥 Download Options
+Settings, history, the download archive and logs live in your user data folder
+(`%LOCALAPPDATA%\ytdlp-gui`, `~/Library/Application Support/ytdlp-gui` or `~/.local/share/ytdlp-gui`).
 
-### Pre-built Executable (Recommended)
-- **Direct Download**: Use the executable in `dist/YouTube-Downloader.exe`
-- **GitHub Releases**: Download from the [Releases](https://github.com/your-username/ytdlp-gui/releases) page
-- **No Installation Required**: Just download and run
+## Türkçe
+
+**YouTube Downloader**, YouTube videolarını, Shorts'ları, oynatma listelerini, kanalları ve müzikleri indirmek için hızlı ve şık bir masaüstü uygulamasıdır.
+
+- Bağlantıyı yapıştırın ya da doğrudan arama yapın; video, liste ve kanallar otomatik tanınır.
+- 8K'ya kadar tüm kaliteler, indirmeden önce **tahmini dosya boyutu** ile listelenir.
+- Sadece ses: MP3, M4A, Opus, FLAC, WAV – kapak resmi ve etiketlerle.
+- Oynatma listeleri ve kanallarda istediğiniz videoları seçip tek tıkla indirin.
+- İndirme kuyruğu: paralel indirme, canlı hız ve kalan süre, **duraklat / devam et / iptal / tekrar dene**.
+- Geçmiş, pano algılama, altyazı, bölümler, SponsorBlock, hız sınırı, proxy.
+- Yaş sınırlı veya üyelere özel videolar için tarayıcı çerezleri desteği.
+- Koyu/açık tema, vurgu renkleri ve tam Türkçe arayüz.
+
+[Sürümler](https://github.com/MihrimatriX/ytdlp-gui/releases) sayfasından işletim sisteminize uygun dosyayı indirip çalıştırmanız yeterli.
+
+---
+
+Please respect YouTube's Terms of Service and copyright law; download only content you have the right to save.

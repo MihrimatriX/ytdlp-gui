@@ -24,8 +24,10 @@ output/
 
 # Build and Distribution
 # ===========================================
-# PyInstaller build directories
+# PyInstaller / flet pack output
 build/
+dist/
+*.spec
 
 # Executable files
 *.app
